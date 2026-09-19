@@ -13,3 +13,4 @@ dist/
 data/uavstudio.db
 data/simulations/*.json
 !data/simulations/.gitkeep
+frontend/test-results/

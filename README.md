@@ -27,14 +27,17 @@ V1 **不负责** PX4、Gazebo、ROS2、AI、SLAM、复杂三维环境和真实�
 5. `docs/04_UI_UX_SPEC_CN.md`
 6. `docs/05_DATA_CONTRACTS.md`
 7. `docs/06_TEST_PLAN.md`
-8. `prompts/01_AI_DEVELOPMENT_PROMPT.md`
+8. `docs/07_UI_VISUAL_ACCEPTANCE_SPEC_CN.md`
+9. `docs/08_3D_ASSET_SYSTEM_V1_1.md`
+10. `docs/09_P0_TEST_FIRST_PLAN.md`
+11. `prompts/01_AI_DEVELOPMENT_PROMPT.md`
 
 ## 目录说明
 
-- `docs/`：冻结设计与技术规格。
-- `frontend/`：核心 Vue 3 前端骨架，视觉结构已经固定，AI 不应推倒重写。
-- `backend/`：由 AI 按 TDD 开发 FastAPI + SQLite + SimpleSimulator。
-- `tests/`：由 AI 按测试计划创建 pytest。
+- `docs/`：冻结设计、技术规格和 UI 验收标准。
+- `frontend/`：Vue 3 前端与 UI/3D 测试。
+- `backend/`：FastAPI + SQLite + SimpleSimulator。
+- `tests/`：pytest 后端测试。
 - `data/simulations/`：运行时保存遥测 JSON。
 - `prompts/`：开发与验收 Prompt。
 
@@ -44,7 +47,15 @@ V1 **不负责** PX4、Gazebo、ROS2、AI、SLAM、复杂三维环境和真实�
 - Three.js + ECharts
 - Python 3.11+ + FastAPI + NumPy
 - SQLite + SQLAlchemy
-- pytest
+- pytest + Vitest + Playwright Core
+
+## 当前开发规则
+
+P0 阶段必须遵循：
+
+> 规格先于测试，测试先于实现。
+
+不允许为了让测试变绿而降低验收标准、删除测试、改成 `skip`，或用硬编码截图/假数据绕过契约。
 
 ## 最终验收主链
 
