@@ -10,10 +10,12 @@ from backend.constants import FLIGHT_BOUNDARY_M
 from backend.models import SimulationRecord
 from backend.schemas import (
     AircraftDefinition,
+    Component,
     ExperimentReplay,
     ExperimentSummary,
     Vector3,
 )
+from backend.seed import build_seed_catalog
 from backend.simulation_manager import SimulationSession
 
 
@@ -91,6 +93,27 @@ def list_experiments(database: Session) -> list[ExperimentSummary]:
     return [_summary_from_record(record) for record in records]
 
 
+def _enrich_legacy_visuals(components: list[Component]) -> list[Component]:
+    """Keep old Replay JSON compatible with the new Component.visual contract.
+
+    Historical engineering parameters remain untouched. Only missing presentation
+    metadata is copied from the current asset manifest-backed seed catalog.
+    """
+
+    current_catalog = build_seed_catalog()
+    enriched: list[Component] = []
+    for component in components:
+        if component.visual is not None:
+            enriched.append(component)
+            continue
+        current = current_catalog.get(component.id)
+        if current is None or current.visual is None:
+            enriched.append(component)
+            continue
+        enriched.append(component.model_copy(update={"visual": current.visual}))
+    return enriched
+
+
 def load_replay(database: Session, simulation_id: int) -> ExperimentReplay:
     record = database.get(SimulationRecord, simulation_id)
     if record is None:
@@ -98,7 +121,10 @@ def load_replay(database: Session, simulation_id: int) -> ExperimentReplay:
     path = Path(record.telemetry_file)
     if not path.exists():
         raise FileNotFoundError(simulation_id)
-    return ExperimentReplay.model_validate_json(path.read_text(encoding="utf-8"))
+    replay = ExperimentReplay.model_validate_json(path.read_text(encoding="utf-8"))
+    return replay.model_copy(
+        update={"components": _enrich_legacy_visuals(replay.components)}
+    )
 
 
 def _summary_from_record(record: SimulationRecord) -> ExperimentSummary:

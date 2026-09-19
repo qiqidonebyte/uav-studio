@@ -8,8 +8,14 @@
       <button :class="['scene-chip', { active: cameraMode === 'free' }]" @click="setCameraMode('free')">自由</button>
     </div>
 
-    <div class="asset-badge" :class="{ loading: loadingAssets }">
-      <span></span>{{ loadingAssets ? '正在加载模型' : 'GLB 教学模型' }}
+    <div class="asset-badge" :class="{ loading: loadingAssets, failed: Boolean(assetError) }">
+      <span></span>
+      {{ assetError ? '3D 资产异常' : loadingAssets ? '正在加载模型' : 'GLB 教学模型' }}
+    </div>
+
+    <div v-if="assetError" class="asset-error" data-testid="asset-error">
+      <b>3D 资产加载失败</b>
+      <span>{{ assetError }}</span>
     </div>
 
     <div v-if="telemetry" class="scene-readout">
@@ -77,8 +83,10 @@ const emit = defineEmits<{
 const host = ref<HTMLDivElement | null>(null)
 const cursor = ref('default')
 const loadingAssets = ref(true)
+const assetError = ref('')
 const cameraMode = ref<'follow' | 'top' | 'side' | 'free'>('free')
 const assemblyMode = computed(() => props.interactive)
+const visualTestProbeEnabled = import.meta.env.DEV || import.meta.env.MODE === 'test'
 
 let scene: THREE.Scene
 let camera: THREE.PerspectiveCamera
@@ -119,7 +127,7 @@ function mountY(): number {
 function disposeObject(root: THREE.Object3D): void {
   root.traverse(object => {
     const mesh = object as THREE.Mesh
-    if (mesh.geometry) mesh.geometry.dispose()
+    if (mesh.geometry && mesh.userData.overlayGeometry) mesh.geometry.dispose()
     const material = mesh.material
     if (Array.isArray(material)) {
       material.forEach(item => {
@@ -219,16 +227,47 @@ function buildOverlay(): void {
   applyAssemblyState()
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function syncVisualTestProbe(): void {
+  if (!visualTestProbeEnabled || !renderer || !aircraftRenderer) return
+  window.__UAV_VISUAL_TEST__ = {
+    version: '1.0',
+    sceneReady: !loadingAssets.value && !assetError.value,
+    pixelRatio: renderer.getPixelRatio(),
+    cameraMode: cameraMode.value,
+    selectedSlot: props.selectedSlot ?? null,
+    loadedAssets: aircraftRenderer.loadedAssetsSnapshot(),
+    aircraftBounds: aircraftRenderer.aircraftBoundsSnapshot(),
+    partBounds: aircraftRenderer.partBoundsSnapshot(),
+    mounts: aircraftRenderer.motorMountsSnapshot(),
+  }
+}
+
 async function rebuildAircraftAssets(): Promise<void> {
   if (!aircraftRenderer) return
   const generation = ++rebuildGeneration
   loadingAssets.value = true
-  await aircraftRenderer.rebuild(props.aircraft, props.components)
-  if (generation !== rebuildGeneration) return
-  buildOverlay()
-  applyAssemblyState()
-  if (props.telemetry) updateFlightScene(props.telemetry)
-  loadingAssets.value = false
+  assetError.value = ''
+  syncVisualTestProbe()
+  try {
+    await aircraftRenderer.rebuild(props.aircraft, props.components)
+    if (generation !== rebuildGeneration) return
+    buildOverlay()
+    applyAssemblyState()
+    if (props.telemetry) updateFlightScene(props.telemetry)
+  } catch (error) {
+    if (generation !== rebuildGeneration) return
+    assetError.value = errorText(error)
+    console.error('[UAV Studio] 3D asset contract failed:', error)
+  } finally {
+    if (generation === rebuildGeneration) {
+      loadingAssets.value = false
+      syncVisualTestProbe()
+    }
+  }
 }
 
 function buildWorld(): void {
@@ -272,7 +311,10 @@ function buildWorld(): void {
   const grid = new THREE.GridHelper(18, 36, 0x9fb1c5, 0xd3dde8)
   grid.position.y = -0.158
   const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material]
-  gridMaterials.forEach(material => { material.opacity = 0.52; material.transparent = true })
+  gridMaterials.forEach(material => {
+    material.opacity = 0.52
+    material.transparent = true
+  })
   scene.add(grid)
 
   const axes = new THREE.AxesHelper(0.62)
@@ -306,8 +348,11 @@ function applyAssemblyState(): void {
 
   if (cgMarker) {
     cgMarker.visible = assemblyMode.value ? Boolean(props.engineering) : Boolean(props.telemetry)
-    if (props.engineering) cgMarker.position.copy(simulationVectorToThree(props.engineering.center_of_gravity_m))
+    if (props.engineering) {
+      cgMarker.position.copy(simulationVectorToThree(props.engineering.center_of_gravity_m))
+    }
   }
+  syncVisualTestProbe()
 }
 
 function updateFlightScene(frame: TelemetryFrame): void {
@@ -327,7 +372,9 @@ function updateFlightScene(frame: TelemetryFrame): void {
   gravityArrow?.setRotationFromQuaternion(vehicleGroup.quaternion.clone().invert())
 
   const radians = (frame.wind.direction_deg * Math.PI) / 180
-  windArrow?.setDirection(new THREE.Vector3(-Math.cos(radians), 0, Math.sin(radians)).normalize())
+  windArrow?.setDirection(
+    new THREE.Vector3(-Math.cos(radians), 0, Math.sin(radians)).normalize(),
+  )
   windArrow?.setLength(0.42 + Math.min(1.5, frame.wind.speed_mps / 5), 0.14, 0.08)
 
   if (frame.t < lastTelemetryTime) {
@@ -376,10 +423,12 @@ function setCameraMode(mode: typeof cameraMode.value): void {
   controls.enableRotate = true
   controls.enablePan = mode === 'free'
   if (mode !== 'free') updateManagedCamera(true)
+  syncVisualTestProbe()
 }
 
 function cameraTarget(): THREE.Vector3 {
-  return vehicleGroup?.position.clone().add(new THREE.Vector3(0, 0.08, 0)) ?? new THREE.Vector3(0, 0.08, 0)
+  return vehicleGroup?.position.clone().add(new THREE.Vector3(0, 0.08, 0))
+    ?? new THREE.Vector3(0, 0.08, 0)
 }
 
 function updateManagedCamera(immediate = false): void {
@@ -402,7 +451,9 @@ function animate(now = performance.now()): void {
   animationId = requestAnimationFrame(animate)
   const dt = Math.min(0.05, Math.max(0, (now - previousAnimationTime) / 1000))
   previousAnimationTime = now
-  aircraftRenderer?.rotateRotors(props.telemetry?.motors.outputs.map(output => output * Math.min(1.4, dt * 60)))
+  aircraftRenderer?.rotateRotors(
+    props.telemetry?.motors.outputs.map(output => output * Math.min(1.4, dt * 60)),
+  )
   updateManagedCamera()
   controls?.update()
   renderer?.render(scene, camera)
@@ -429,7 +480,9 @@ const componentSignature = computed(() => {
     aircraft?.flight_controller_id,
     aircraft?.gnss_id,
     aircraft?.payload_id,
-    props.components.map(component => component.id).join(','),
+    props.components
+      .map(component => `${component.id}:${component.visual?.asset_key ?? 'NO_VISUAL'}`)
+      .join(','),
   ].join('|')
 })
 
@@ -439,7 +492,7 @@ onMounted(async () => {
   camera.position.set(2.4, 1.6, 3.0)
 
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  renderer.setPixelRatio(visualTestProbeEnabled ? 1 : Math.min(window.devicePixelRatio, 2))
   renderer.setClearColor(0x000000, 0)
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = THREE.PCFSoftShadowMap
@@ -466,6 +519,7 @@ onMounted(async () => {
 
   resize()
   window.addEventListener('resize', resize)
+  syncVisualTestProbe()
   await rebuildAircraftAssets()
   if (props.telemetry) updateFlightScene(props.telemetry)
   applyAssemblyState()
@@ -475,7 +529,11 @@ onMounted(async () => {
 
 watch(componentSignature, () => { void rebuildAircraftAssets() })
 watch(() => props.telemetry, frame => { if (frame) updateFlightScene(frame) }, { deep: true })
-watch(() => [props.selectedSlot, props.engineering, props.aircraft] as const, applyAssemblyState, { deep: true })
+watch(
+  () => [props.selectedSlot, props.engineering, props.aircraft] as const,
+  applyAssemblyState,
+  { deep: true },
+)
 
 onBeforeUnmount(() => {
   rebuildGeneration += 1
@@ -492,6 +550,7 @@ onBeforeUnmount(() => {
   pmrem?.dispose()
   renderer?.dispose()
   renderer?.domElement.remove()
+  if (visualTestProbeEnabled) delete window.__UAV_VISUAL_TEST__
 })
 </script>
 
@@ -535,6 +594,34 @@ onBeforeUnmount(() => {
 .asset-badge.loading span {
   background: #d97706;
   animation: assetPulse 1s infinite ease-in-out;
+}
+.asset-badge.failed {
+  border-color: #efc5c0;
+  color: #b42318;
+}
+.asset-badge.failed span {
+  background: #dc2626;
+  animation: none;
+}
+.asset-error {
+  position: absolute;
+  z-index: 10;
+  left: 50%;
+  top: 50%;
+  width: min(480px, calc(100% - 48px));
+  transform: translate(-50%, -50%);
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid #efc5c0;
+  border-radius: 8px;
+  background: rgba(255, 247, 246, .96);
+  color: #9f2f25;
+  box-shadow: 0 12px 30px rgba(110, 38, 31, .12);
+  font-size: 11px;
+}
+.asset-error b {
+  font-size: 13px;
 }
 @keyframes assetPulse { 50% { opacity: .3; } }
 </style>

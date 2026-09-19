@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import type { Component, ComponentType } from '../src/types/aircraft'
+import type { Component, ComponentType, ComponentVisual } from '../src/types/aircraft'
 import {
   assetForComponent,
   assetUrl,
@@ -25,13 +25,27 @@ const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as {
   }>
 }
 
-function component(id: number, type: ComponentType): Component {
+function manifestVisual(id: number): ComponentVisual {
+  const item = manifest.componentMap[String(id)]
+  if (!item) throw new Error(`manifest component ${id} missing`)
+  return {
+    asset_key: `${item.type}:${id}`,
+    file: item.file ?? null,
+    cw_file: item.cw ?? null,
+    ccw_file: item.ccw ?? null,
+    thumbnail: item.thumbnail ?? null,
+    scale: 1,
+  }
+}
+
+function component(id: number, type: ComponentType, withVisual = true): Component {
   return {
     id,
     name: `Component-${id}`,
     type,
     mass_kg: 0.1,
     parameters_json: {},
+    ...(withVisual ? { visual: manifestVisual(id) } : {}),
   }
 }
 
@@ -121,7 +135,7 @@ describe('P0 Asset Contract', () => {
     }
   })
 
-  it('P0-ASSET-010 runtime registry agrees with manifest for current components', () => {
+  it('P0-ASSET-010 Component.visual agrees with manifest resources', () => {
     for (const [idText, item] of Object.entries(manifest.componentMap)) {
       const id = Number(idText)
       const c = component(id, item.type)
@@ -135,13 +149,20 @@ describe('P0 Asset Contract', () => {
     }
   })
 
-  it('P0-ASSET-011 unknown component must fail loudly instead of silently showing a default model', () => {
-    const unknown = component(9999, 'motor')
+  it('P0-ASSET-011 unknown installed component fails loudly instead of silently showing a default model', () => {
+    const unknown: Component = {
+      id: 9999,
+      name: 'Unknown Motor',
+      type: 'motor',
+      mass_kg: 0.1,
+      parameters_json: {},
+    }
     expect(() => assetForComponent(unknown, 'motor')).toThrow()
   })
 
-  it('P0-ASSET-012 Component data contract owns visual metadata instead of relying only on numeric frontend ids', () => {
+  it('P0-ASSET-012 Component data contract owns visual metadata', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/types/aircraft.ts'), 'utf-8')
     expect(source).toMatch(/\bvisual\s*\??\s*:/)
+    expect(source).toMatch(/interface\s+ComponentVisual/)
   })
 })

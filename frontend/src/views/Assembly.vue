@@ -7,7 +7,7 @@
           v-for="(step, index) in ASSEMBLY_STEPS"
           :key="step.id"
           :class="['assembly-step', { active: index === activeStepIndex }]"
-          @click="activeStepIndex = index"
+          @click="activateStep(index)"
         >
           <span class="step-index">{{ index + 1 }}</span>
           <span>
@@ -45,7 +45,7 @@
           <div
             v-for="slot in activeStep.slots"
             :key="slot"
-            class="slot-picker"
+            class="slot-picker component-card-slot"
             :class="{ selected: store.selectedSlot === slot }"
             @click="store.selectSlot(slot)"
           >
@@ -55,36 +55,34 @@
                 {{ store.componentForSlot(slot)?.name ?? '未安装' }}
               </span>
             </div>
-            <select
-              :value="selectionFor(slot)"
-              @change="updateSelection(slot, $event)"
-            >
-              <option :value="null">请选择{{ SLOT_LABELS[slot] }}</option>
-              <option
+
+            <div class="component-card-list">
+              <ComponentCard
                 v-for="component in availableComponents(slot)"
                 :key="component.id"
-                :value="component.id"
-              >
-                {{ component.name }} · {{ component.mass_kg.toFixed(3) }} kg
-              </option>
-            </select>
-            <div class="slot-actions">
-              <button
-                class="primary-action compact"
-                :disabled="!selectionFor(slot) || store.saving"
-                @click.stop="install(slot)"
-              >
-                {{ store.componentForSlot(slot) ? '更换组件' : installLabel(slot) }}
-              </button>
-              <button
-                v-if="isOptionalSlot(slot)"
-                class="ghost-action"
-                :disabled="!store.componentForSlot(slot) || store.saving"
-                @click.stop="remove(slot)"
-              >
-                移除
-              </button>
+                :component="component"
+                :installed="installedId(slot) === component.id"
+                :selected="candidateFor(slot) === component.id"
+                :disabled="store.saving"
+                :specs="componentSpecs(component)"
+                :action-label="cardActionLabel(slot)"
+                @choose="chooseCandidate(slot, component.id)"
+                @install="install(slot, component.id)"
+              />
             </div>
+
+            <div v-if="availableComponents(slot).length === 0" class="component-list-empty">
+              当前组件库没有可用于 {{ SLOT_LABELS[slot] }} 的组件。
+            </div>
+
+            <button
+              v-if="isOptionalSlot(slot) && store.componentForSlot(slot)"
+              class="ghost-action component-remove-action"
+              :disabled="store.saving"
+              @click.stop="remove(slot)"
+            >
+              移除当前{{ SLOT_LABELS[slot] }}
+            </button>
           </div>
         </template>
 
@@ -130,6 +128,10 @@
           <div><dt>名称</dt><dd>{{ selectedComponent.name }}</dd></div>
           <div><dt>类别</dt><dd>{{ componentTypeLabel(selectedComponent.type) }}</dd></div>
           <div><dt>质量</dt><dd>{{ selectedComponent.mass_kg.toFixed(3) }} kg</dd></div>
+          <div v-if="selectedComponent.visual">
+            <dt>3D 资产</dt>
+            <dd>{{ selectedComponent.visual.asset_key }}</dd>
+          </div>
           <div
             v-for="parameter in displayParameters(selectedComponent)"
             :key="parameter.label"
@@ -229,6 +231,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import ComponentCard from '../components/ComponentCard.vue'
 import DroneScene from '../components/DroneScene.vue'
 import { useAssemblyStore } from '../stores/assembly'
 import type { Component, ComponentType } from '../types/aircraft'
@@ -244,7 +247,7 @@ import {
 
 const store = useAssemblyStore()
 const activeStepIndex = ref(0)
-const selections = reactive<Partial<Record<AssemblySlot, number | null>>>({})
+const candidateSelections = reactive<Partial<Record<AssemblySlot, number>>>({})
 const stateText = {
   done: '已配置',
   warning: '警告',
@@ -269,6 +272,7 @@ const parameterLabels: Record<string, string> = {
   power_module_position_m: '电源模块位置',
   flight_controller_position_m: '飞控安装位置',
   gnss_mount_position_m: 'GNSS 安装位置',
+  mount_points: '标准安装点',
   kv: 'KV 值',
   profiles: '教学性能曲线',
   max_current_a: '最大电流',
@@ -304,6 +308,12 @@ onMounted(async () => {
   }
 })
 
+function activateStep(index: number): void {
+  activeStepIndex.value = index
+  const firstSlot = ASSEMBLY_STEPS[index]?.slots[0]
+  if (firstSlot) store.selectSlot(firstSlot)
+}
+
 function stepStatus(step: AssemblyStep) {
   if (!store.aircraft) return 'pending' as const
   return getStepStatus(step, store.aircraft, store.validation)
@@ -313,38 +323,38 @@ function availableComponents(slot: AssemblySlot): Component[] {
   return slotComponents(store.components, slot)
 }
 
-function selectionFor(slot: AssemblySlot): number | null {
-  if (Object.prototype.hasOwnProperty.call(selections, slot)) {
-    return selections[slot] ?? null
-  }
+function installedId(slot: AssemblySlot): number | null {
   return store.aircraft ? installedComponentId(store.aircraft, slot) : null
 }
 
-function updateSelection(slot: AssemblySlot, event: Event): void {
-  const value = (event.target as HTMLSelectElement).value
-  selections[slot] = value ? Number(value) : null
+function candidateFor(slot: AssemblySlot): number | null {
+  return candidateSelections[slot] ?? installedId(slot)
 }
 
-async function install(slot: AssemblySlot): Promise<void> {
-  const componentId = selectionFor(slot)
-  if (!componentId) return
+function chooseCandidate(slot: AssemblySlot, componentId: number): void {
+  candidateSelections[slot] = componentId
+  store.selectSlot(slot)
+}
+
+async function install(slot: AssemblySlot, componentId: number): Promise<void> {
+  chooseCandidate(slot, componentId)
   await store.installComponent(slot, componentId)
+  candidateSelections[slot] = componentId
 }
 
 async function remove(slot: AssemblySlot): Promise<void> {
   await store.removeComponent(slot)
-  selections[slot] = null
+  delete candidateSelections[slot]
 }
 
 function isOptionalSlot(slot: AssemblySlot): boolean {
   return slot === 'gnss' || slot === 'payload'
 }
 
-function installLabel(slot: AssemblySlot): string {
-  if (slot === 'motor' || slot === 'esc' || slot === 'propeller') {
-    return '安装到 4 个机臂'
-  }
-  return '安装组件'
+function cardActionLabel(slot: AssemblySlot): string {
+  if (store.componentForSlot(slot)) return '更换'
+  if (slot === 'motor' || slot === 'esc' || slot === 'propeller') return '安装 ×4'
+  return '安装'
 }
 
 function selectSceneSlot(slot: AssemblySlot): void {
@@ -355,6 +365,42 @@ function selectSceneSlot(slot: AssemblySlot): void {
 
 function componentTypeLabel(type: ComponentType): string {
   return typeLabels[type]
+}
+
+function numberParameter(component: Component, key: string): number | null {
+  const value = component.parameters_json[key]
+  return typeof value === 'number' ? value : null
+}
+
+function componentSpecs(component: Component): string[] {
+  const p = component.parameters_json
+  switch (component.type) {
+    case 'frame': {
+      const diagonal = numberParameter(component, 'motor_diagonal_m')
+      return [
+        diagonal ? `轴距 ${(diagonal * 1000).toFixed(0)} mm` : '轴距未定义',
+        `质量 ${(component.mass_kg * 1000).toFixed(0)} g`,
+      ]
+    }
+    case 'motor': {
+      const profiles = Array.isArray(p.profiles) ? p.profiles.length : 0
+      return [`${numberParameter(component, 'kv')?.toFixed(0) ?? '?'} KV`, `${profiles} 组性能曲线`]
+    }
+    case 'esc':
+      return [`${numberParameter(component, 'max_current_a')?.toFixed(0) ?? '?'} A`, `${numberParameter(component, 'voltage_max_v')?.toFixed(0) ?? '?'} V max`]
+    case 'propeller':
+      return [`${numberParameter(component, 'diameter_in')?.toFixed(0) ?? '?'} in`, `桨距 ${numberParameter(component, 'pitch_in')?.toFixed(1) ?? '?'}`]
+    case 'battery':
+      return [`${numberParameter(component, 'cell_count')?.toFixed(0) ?? '?'}S`, `${numberParameter(component, 'capacity_mah')?.toFixed(0) ?? '?'} mAh`]
+    case 'power_module':
+      return [`${numberParameter(component, 'max_current_a')?.toFixed(0) ?? '?'} A`, `${numberParameter(component, 'voltage_max_v')?.toFixed(0) ?? '?'} V max`]
+    case 'flight_controller':
+      return ['飞控', `${numberParameter(component, 'voltage_max_v')?.toFixed(0) ?? '?'} V max`]
+    case 'gnss':
+      return ['GNSS / 罗盘', `${numberParameter(component, 'voltage_max_v')?.toFixed(1) ?? '?'} V max`]
+    case 'payload':
+      return [`挂载 ${String(p.mount ?? '未定义')}`, `${(component.mass_kg * 1000).toFixed(0)} g`]
+  }
 }
 
 function formatNestedValue(value: unknown): string {
@@ -375,7 +421,7 @@ function formatNestedValue(value: unknown): string {
 
 function displayParameters(component: Component) {
   return Object.entries(component.parameters_json)
-    .filter(([key]) => key !== 'source' && key !== 'points')
+    .filter(([key]) => key !== 'source' && key !== 'points' && key !== '_visual')
     .map(([key, value]) => ({
       label: parameterLabels[key] ?? key,
       value: formatNestedValue(value),
@@ -392,3 +438,26 @@ function formatPower(watts: number): string {
   return watts >= 1000 ? `${(watts / 1000).toFixed(2)} kW` : `${watts.toFixed(0)} W`
 }
 </script>
+
+<style scoped>
+.component-card-slot {
+  padding: 10px;
+}
+.component-card-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+.component-list-empty {
+  padding: 14px 8px;
+  border: 1px dashed #d8e1ed;
+  border-radius: 7px;
+  color: #748197;
+  text-align: center;
+  font-size: 10px;
+}
+.component-remove-action {
+  width: 100%;
+  margin-top: 9px;
+}
+</style>

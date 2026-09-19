@@ -8,6 +8,7 @@ from pydantic import (
     ConfigDict,
     Field,
     computed_field,
+    field_serializer,
     model_validator,
 )
 
@@ -126,6 +127,9 @@ class FrameParameters(BaseModel):
     power_module_position_m: Vector3 = Field(default_factory=Vector3)
     flight_controller_position_m: Vector3 = Field(default_factory=Vector3)
     gnss_mount_position_m: Vector3 = Field(default_factory=Vector3)
+    # P0 Sprint 1 only formalizes the field. Engineering + simulator migration to
+    # one shared mount-point source is intentionally left for the next sprint.
+    mount_points: dict[str, Vector3] = Field(default_factory=dict)
 
 
 class ESCParameters(BaseModel):
@@ -203,6 +207,29 @@ class PayloadParameters(BaseModel):
     mount: Literal["front", "bottom_center"] = "bottom_center"
 
 
+class ComponentVisual(BaseModel):
+    """Pure presentation metadata for one engineering component.
+
+    File names are generated from the checked-in 3D asset manifest.  Physics
+    code must never read these values.
+    """
+
+    model_config = MODEL_CONFIG
+
+    asset_key: str = Field(min_length=1)
+    file: str | None = None
+    cw_file: str | None = None
+    ccw_file: str | None = None
+    thumbnail: str | None = None
+    scale: float = Field(default=1.0, gt=0.0)
+
+    @model_validator(mode="after")
+    def validate_model_reference(self) -> "ComponentVisual":
+        if self.file is None and (self.cw_file is None or self.ccw_file is None):
+            raise ValueError("component visual must define file or both cw_file/ccw_file")
+        return self
+
+
 class Component(BaseModel):
     model_config = MODEL_CONFIG
 
@@ -211,6 +238,35 @@ class Component(BaseModel):
     type: ComponentType
     mass_kg: float = Field(gt=0.0)
     parameters_json: dict = Field(default_factory=dict)
+    visual: ComponentVisual | None = None
+
+    @field_serializer("parameters_json")
+    def serialize_engineering_parameters(self, value: dict) -> dict:
+        # `_visual` is an internal persistence detail; API clients receive the
+        # first-class `visual` field instead of a duplicated nested copy.
+        return {key: item for key, item in value.items() if key != "_visual"}
+
+    @model_validator(mode="before")
+    @classmethod
+    def derive_visual_from_persisted_parameters(cls, data):
+        """Backwards-compatible storage without a SQLite schema migration.
+
+        Existing databases already have a JSON parameters column.  Visual
+        metadata is persisted under the reserved `_visual` key, then exposed as
+        a first-class `Component.visual` field at the API boundary.
+        """
+
+        if not isinstance(data, dict) or data.get("visual") is not None:
+            return data
+        parameters = data.get("parameters_json")
+        if not isinstance(parameters, dict):
+            return data
+        raw_visual = parameters.get("_visual")
+        if not isinstance(raw_visual, dict):
+            return data
+        next_data = dict(data)
+        next_data["visual"] = raw_visual
+        return next_data
 
 
 class AircraftDefinition(BaseModel):
@@ -400,7 +456,13 @@ def parse_component_parameters(
         "gnss": VoltageRangeParameters,
         "payload": PayloadParameters,
     }
-    return parser_by_type[component.type].model_validate(component.parameters_json)
+    # `_visual` is a reserved storage key and is not an engineering input.
+    engineering_parameters = {
+        key: value
+        for key, value in component.parameters_json.items()
+        if key != "_visual"
+    }
+    return parser_by_type[component.type].model_validate(engineering_parameters)
 
 
 def catalog_values(catalog: dict[int, Component] | Iterable[Component]) -> Iterable[Component]:

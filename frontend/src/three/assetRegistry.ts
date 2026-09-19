@@ -1,48 +1,69 @@
-import type { Component, ComponentType } from '../types/aircraft'
+import type { Component, ComponentType, ComponentVisual } from '../types/aircraft'
 
 export type RotorDirection = 'CW' | 'CCW'
 
-export interface ComponentVisualAsset {
-  type: ComponentType
-  file?: string
-  cwFile?: string
-  ccwFile?: string
-  thumbnail?: string
-  label: string
-  propOffsetY?: number
-}
-
 export const UAV_ASSET_BASE = '/models/uav/v1_1/'
 
-const ASSETS: Record<number, ComponentVisualAsset> = {
-  1: { type: 'frame', file: 'frame_650.glb', thumbnail: 'thumbnails/frame_650.png', label: '650 四旋翼机架' },
-  2: { type: 'frame', file: 'frame_450.glb', thumbnail: 'thumbnails/frame_450.png', label: '450 四旋翼机架' },
-  10: { type: 'motor', file: 'motor_5010_360kv.glb', thumbnail: 'thumbnails/motor_5010.png', label: '5010 360KV 电机', propOffsetY: 0.070 },
-  11: { type: 'motor', file: 'motor_4008_500kv.glb', thumbnail: 'thumbnails/motor_4008.png', label: '4008 500KV 电机', propOffsetY: 0.058 },
-  20: { type: 'esc', file: 'esc_30a.glb', thumbnail: 'thumbnails/esc_30a.png', label: '30A 电调' },
-  21: { type: 'esc', file: 'esc_40a.glb', thumbnail: 'thumbnails/esc_40a.png', label: '40A 电调' },
-  30: { type: 'propeller', cwFile: 'prop_15_cw.glb', ccwFile: 'prop_15_ccw.glb', thumbnail: 'thumbnails/prop_15.png', label: '15×5 桨' },
-  31: { type: 'propeller', cwFile: 'prop_14_cw.glb', ccwFile: 'prop_14_ccw.glb', thumbnail: 'thumbnails/prop_14.png', label: '14×4.8 桨' },
-  40: { type: 'battery', file: 'battery_6s_10000.glb', thumbnail: 'thumbnails/battery_10000.png', label: '6S 10000mAh 电池' },
-  41: { type: 'battery', file: 'battery_6s_16000.glb', thumbnail: 'thumbnails/battery_16000.png', label: '6S 16000mAh 电池' },
-  50: { type: 'power_module', file: 'power_120a.glb', thumbnail: 'thumbnails/power_120.png', label: '120A 电源模块' },
-  51: { type: 'power_module', file: 'power_160a.glb', thumbnail: 'thumbnails/power_160.png', label: '160A 电源模块' },
-  60: { type: 'flight_controller', file: 'fc_v1.glb', thumbnail: 'thumbnails/fc_v1.png', label: 'EduFC-V1' },
-  61: { type: 'flight_controller', file: 'fc_v2.glb', thumbnail: 'thumbnails/fc_v2.png', label: 'EduFC-V2' },
-  70: { type: 'gnss', file: 'gnss_m8n.glb', thumbnail: 'thumbnails/gnss_m8n.png', label: 'M8N GNSS' },
-  80: { type: 'payload', file: 'payload_camera_300g.glb', thumbnail: 'thumbnails/payload_camera.png', label: '300g 云台相机' },
-}
-
-const DEFAULT_ID_BY_TYPE: Record<ComponentType, number> = {
-  frame: 1,
-  motor: 10,
-  esc: 20,
-  propeller: 30,
-  battery: 40,
-  power_module: 50,
-  flight_controller: 60,
-  gnss: 70,
-  payload: 80,
+/**
+ * Ghost models are only used when a slot is empty so the student can see the
+ * installation location. Installed components MUST provide Component.visual.
+ */
+const GHOST_VISUALS: Record<ComponentType, ComponentVisual> = {
+  frame: {
+    asset_key: 'ghost:frame',
+    file: 'frame_650.glb',
+    thumbnail: 'thumbnails/frame_650.png',
+    scale: 1,
+  },
+  motor: {
+    asset_key: 'ghost:motor',
+    file: 'motor_5010_360kv.glb',
+    thumbnail: 'thumbnails/motor_5010.png',
+    scale: 1,
+  },
+  esc: {
+    asset_key: 'ghost:esc',
+    file: 'esc_30a.glb',
+    thumbnail: 'thumbnails/esc_30a.png',
+    scale: 1,
+  },
+  propeller: {
+    asset_key: 'ghost:propeller',
+    cw_file: 'prop_15_cw.glb',
+    ccw_file: 'prop_15_ccw.glb',
+    thumbnail: 'thumbnails/prop_15.png',
+    scale: 1,
+  },
+  battery: {
+    asset_key: 'ghost:battery',
+    file: 'battery_6s_10000.glb',
+    thumbnail: 'thumbnails/battery_10000.png',
+    scale: 1,
+  },
+  power_module: {
+    asset_key: 'ghost:power_module',
+    file: 'power_120a.glb',
+    thumbnail: 'thumbnails/power_120.png',
+    scale: 1,
+  },
+  flight_controller: {
+    asset_key: 'ghost:flight_controller',
+    file: 'fc_v1.glb',
+    thumbnail: 'thumbnails/fc_v1.png',
+    scale: 1,
+  },
+  gnss: {
+    asset_key: 'ghost:gnss',
+    file: 'gnss_m8n.glb',
+    thumbnail: 'thumbnails/gnss_m8n.png',
+    scale: 1,
+  },
+  payload: {
+    asset_key: 'ghost:payload',
+    file: 'payload_camera_300g.glb',
+    thumbnail: 'thumbnails/payload_camera.png',
+    scale: 1,
+  },
 }
 
 export const MOTOR_DIRECTIONS = {
@@ -52,30 +73,69 @@ export const MOTOR_DIRECTIONS = {
   M4: 'CW',
 } as const satisfies Record<'M1' | 'M2' | 'M3' | 'M4', RotorDirection>
 
-export function assetForComponent(component: Component | null | undefined, fallbackType: ComponentType): ComponentVisualAsset {
-  if (component && ASSETS[component.id]) return ASSETS[component.id]
-  return ASSETS[DEFAULT_ID_BY_TYPE[fallbackType]]
+function assertVisualType(component: Component, expectedType: ComponentType): void {
+  if (component.type !== expectedType) {
+    throw new Error(
+      `3D asset type mismatch: component ${component.id} is ${component.type}, expected ${expectedType}`,
+    )
+  }
 }
 
-export function assetUrl(asset: ComponentVisualAsset, direction?: RotorDirection): string {
-  const file = direction === 'CW' ? asset.cwFile : direction === 'CCW' ? asset.ccwFile : asset.file
-  if (!file) throw new Error(`3D asset file missing for ${asset.label}`)
+export function assetForComponent(
+  component: Component | null | undefined,
+  fallbackType: ComponentType,
+): ComponentVisual {
+  if (!component) return GHOST_VISUALS[fallbackType]
+  assertVisualType(component, fallbackType)
+  if (!component.visual) {
+    throw new Error(
+      `Component ${component.id} (${component.name}) has no visual metadata. ` +
+      'Add it to the 3D asset manifest / component data contract instead of silently reusing another model.',
+    )
+  }
+  return component.visual
+}
+
+export function assetUrl(
+  asset: ComponentVisual,
+  direction?: RotorDirection,
+): string {
+  const file = direction === 'CW'
+    ? asset.cw_file
+    : direction === 'CCW'
+      ? asset.ccw_file
+      : asset.file
+
+  if (!file) {
+    throw new Error(
+      `3D asset file missing for ${asset.asset_key}` +
+      (direction ? ` (${direction})` : ''),
+    )
+  }
   return `${UAV_ASSET_BASE}${file}`
 }
 
-export function thumbnailForComponent(component: Component): string | null {
-  const spec = ASSETS[component.id]
-  return spec?.thumbnail ? `${UAV_ASSET_BASE}${spec.thumbnail}` : null
+export function thumbnailForComponent(component: Component): string {
+  if (!component.visual) {
+    throw new Error(`Component ${component.id} (${component.name}) has no visual metadata`)
+  }
+  if (!component.visual.thumbnail) {
+    throw new Error(`Component ${component.id} (${component.name}) has no thumbnail`)
+  }
+  return `${UAV_ASSET_BASE}${component.visual.thumbnail}`
 }
 
-export function propellerAssetUrl(component: Component | null | undefined, direction: RotorDirection): string {
+export function propellerAssetUrl(
+  component: Component | null | undefined,
+  direction: RotorDirection,
+): string {
   return assetUrl(assetForComponent(component, 'propeller'), direction)
 }
 
-export function propellerOffsetY(component: Component | null | undefined): number {
-  return assetForComponent(component, 'motor').propOffsetY ?? 0.064
-}
-
-export function knownAssetIds(): number[] {
-  return Object.keys(ASSETS).map(Number).sort((a, b) => a - b)
+/**
+ * Current V1.1 motor models share a conservative propeller hub offset.
+ * Mount offsets will move into the unified Frame Mount System in P0 Sprint 2.
+ */
+export function propellerOffsetY(_component: Component | null | undefined): number {
+  return 0.064
 }

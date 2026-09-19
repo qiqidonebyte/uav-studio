@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -7,6 +10,43 @@ from backend.models import AircraftRecord, ComponentRecord
 from backend.schemas import AircraftDefinition, Component, Vector3
 
 EDUCATIONAL_SAMPLE_DATA = "Educational Sample Data"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ASSET_MANIFEST_PATH = (
+    PROJECT_ROOT / "frontend" / "public" / "models" / "uav" / "v1_1" / "asset_manifest.json"
+)
+
+
+def _load_asset_manifest() -> dict:
+    if not ASSET_MANIFEST_PATH.exists():
+        raise RuntimeError(
+            "3D asset manifest is missing: "
+            f"{ASSET_MANIFEST_PATH.relative_to(PROJECT_ROOT)}"
+        )
+    payload = json.loads(ASSET_MANIFEST_PATH.read_text(encoding="utf-8"))
+    if payload.get("units") != "meter" or not isinstance(payload.get("componentMap"), dict):
+        raise RuntimeError("3D asset manifest is invalid")
+    return payload
+
+
+ASSET_MANIFEST = _load_asset_manifest()
+
+
+def _visual(component_id: int) -> dict:
+    item = ASSET_MANIFEST["componentMap"].get(str(component_id))
+    if not isinstance(item, dict):
+        raise RuntimeError(f"3D asset manifest has no component {component_id}")
+    return {
+        "asset_key": f"{item['type']}:{component_id}",
+        "file": item.get("file"),
+        "cw_file": item.get("cw"),
+        "ccw_file": item.get("ccw"),
+        "thumbnail": item.get("thumbnail"),
+        "scale": 1.0,
+    }
+
+
+def _with_visual(component_id: int, parameters: dict) -> dict:
+    return {**parameters, "_visual": _visual(component_id)}
 
 
 def _voltage_profile(
@@ -78,178 +118,207 @@ def build_seed_catalog() -> dict[int, Component]:
             name="EduFrame-650",
             type="frame",
             mass_kg=0.45,
-            parameters_json={
-                "motor_diagonal_m": 0.65,
-                "battery_position_m": {"x": -0.03, "y": 0.0, "z": -0.10},
-                "power_module_position_m": {"x": 0.0, "y": 0.0, "z": 0.02},
-                "flight_controller_position_m": {"x": 0.0, "y": 0.0, "z": 0.05},
-                "gnss_mount_position_m": {"x": -0.16, "y": 0.0, "z": 0.08},
-            },
+            parameters_json=_with_visual(
+                1,
+                {
+                    "motor_diagonal_m": 0.65,
+                    "battery_position_m": {"x": -0.03, "y": 0.0, "z": -0.10},
+                    "power_module_position_m": {"x": 0.0, "y": 0.0, "z": 0.02},
+                    "flight_controller_position_m": {"x": 0.0, "y": 0.0, "z": 0.05},
+                    "gnss_mount_position_m": {"x": -0.16, "y": 0.0, "z": 0.08},
+                },
+            ),
         ),
         Component(
             id=2,
             name="EduFrame-450",
             type="frame",
             mass_kg=0.30,
-            parameters_json={
-                "motor_diagonal_m": 0.45,
-                "battery_position_m": {"x": -0.02, "y": 0.0, "z": -0.08},
-                "power_module_position_m": {"x": 0.0, "y": 0.0, "z": 0.015},
-                "flight_controller_position_m": {"x": 0.0, "y": 0.0, "z": 0.035},
-                "gnss_mount_position_m": {"x": -0.12, "y": 0.0, "z": 0.06},
-            },
+            parameters_json=_with_visual(
+                2,
+                {
+                    "motor_diagonal_m": 0.45,
+                    "battery_position_m": {"x": -0.02, "y": 0.0, "z": -0.08},
+                    "power_module_position_m": {"x": 0.0, "y": 0.0, "z": 0.015},
+                    "flight_controller_position_m": {"x": 0.0, "y": 0.0, "z": 0.035},
+                    "gnss_mount_position_m": {"x": -0.12, "y": 0.0, "z": 0.06},
+                },
+            ),
         ),
         Component(
             id=10,
             name="EduMotor-5010-360KV",
             type="motor",
             mass_kg=0.18,
-            parameters_json={
-                "kv": 360.0,
-                "profiles": [
-                    _profile(22.2, 30, 22.0, 22.0, 488.0),
-                    _profile(25.2, 30, 26.0, 25.0, 630.0),
-                    _profile(22.2, 31, 17.0, 18.0, 400.0),
-                    _profile(25.2, 31, 20.0, 21.0, 529.0),
-                ],
-            },
+            parameters_json=_with_visual(
+                10,
+                {
+                    "kv": 360.0,
+                    "profiles": [
+                        _profile(22.2, 30, 22.0, 22.0, 488.0),
+                        _profile(25.2, 30, 26.0, 25.0, 630.0),
+                        _profile(22.2, 31, 17.0, 18.0, 400.0),
+                        _profile(25.2, 31, 20.0, 21.0, 529.0),
+                    ],
+                },
+            ),
         ),
         Component(
             id=11,
             name="EduMotor-4008-500KV",
             type="motor",
             mass_kg=0.12,
-            parameters_json={
-                "kv": 500.0,
-                "profiles": [
-                    _profile(22.2, 31, 14.0, 15.0, 333.0),
-                    _profile(25.2, 31, 17.0, 18.0, 454.0),
-                ],
-            },
+            parameters_json=_with_visual(
+                11,
+                {
+                    "kv": 500.0,
+                    "profiles": [
+                        _profile(22.2, 31, 14.0, 15.0, 333.0),
+                        _profile(25.2, 31, 17.0, 18.0, 454.0),
+                    ],
+                },
+            ),
         ),
         Component(
             id=20,
             name="EduESC-30A",
             type="esc",
             mass_kg=0.035,
-            parameters_json={
-                "max_current_a": 40.0,
-                "voltage_min_v": 12.0,
-                "voltage_max_v": 30.0,
-            },
+            parameters_json=_with_visual(
+                20,
+                {
+                    "max_current_a": 40.0,
+                    "voltage_min_v": 12.0,
+                    "voltage_max_v": 30.0,
+                },
+            ),
         ),
         Component(
             id=21,
             name="EduESC-40A",
             type="esc",
             mass_kg=0.045,
-            parameters_json={
-                "max_current_a": 50.0,
-                "voltage_min_v": 12.0,
-                "voltage_max_v": 30.0,
-            },
+            parameters_json=_with_visual(
+                21,
+                {
+                    "max_current_a": 50.0,
+                    "voltage_min_v": 12.0,
+                    "voltage_max_v": 30.0,
+                },
+            ),
         ),
         Component(
             id=30,
             name="EduProp-15x5",
             type="propeller",
             mass_kg=0.025,
-            parameters_json={
-                "diameter_in": 15.0,
-                "pitch_in": 5.0,
-                "direction": "PAIR",
-            },
+            parameters_json=_with_visual(
+                30,
+                {"diameter_in": 15.0, "pitch_in": 5.0, "direction": "PAIR"},
+            ),
         ),
         Component(
             id=31,
             name="EduProp-14x4.8",
             type="propeller",
             mass_kg=0.018,
-            parameters_json={
-                "diameter_in": 14.0,
-                "pitch_in": 4.8,
-                "direction": "PAIR",
-            },
+            parameters_json=_with_visual(
+                31,
+                {"diameter_in": 14.0, "pitch_in": 4.8, "direction": "PAIR"},
+            ),
         ),
         Component(
             id=40,
             name="EduBattery-6S-10000",
             type="battery",
             mass_kg=1.05,
-            parameters_json={
-                "cell_count": 6,
-                "capacity_mah": 10000.0,
-                "nominal_voltage_v": 22.2,
-                "voltage_min_v": 18.0,
-                "voltage_max_v": 25.2,
-                "max_continuous_current_a": 100.0,
-                "usable_capacity_ratio": 0.8,
-            },
+            parameters_json=_with_visual(
+                40,
+                {
+                    "cell_count": 6,
+                    "capacity_mah": 10000.0,
+                    "nominal_voltage_v": 22.2,
+                    "voltage_min_v": 18.0,
+                    "voltage_max_v": 25.2,
+                    "max_continuous_current_a": 100.0,
+                    "usable_capacity_ratio": 0.8,
+                },
+            ),
         ),
         Component(
             id=41,
             name="EduBattery-6S-16000",
             type="battery",
             mass_kg=1.55,
-            parameters_json={
-                "cell_count": 6,
-                "capacity_mah": 16000.0,
-                "nominal_voltage_v": 22.2,
-                "voltage_min_v": 18.0,
-                "voltage_max_v": 25.2,
-                "max_continuous_current_a": 160.0,
-                "usable_capacity_ratio": 0.8,
-            },
+            parameters_json=_with_visual(
+                41,
+                {
+                    "cell_count": 6,
+                    "capacity_mah": 16000.0,
+                    "nominal_voltage_v": 22.2,
+                    "voltage_min_v": 18.0,
+                    "voltage_max_v": 25.2,
+                    "max_continuous_current_a": 160.0,
+                    "usable_capacity_ratio": 0.8,
+                },
+            ),
         ),
         Component(
             id=50,
             name="EduPower-120A",
             type="power_module",
             mass_kg=0.06,
-            parameters_json={
-                "max_current_a": 120.0,
-                "voltage_min_v": 12.0,
-                "voltage_max_v": 30.0,
-            },
+            parameters_json=_with_visual(
+                50,
+                {"max_current_a": 120.0, "voltage_min_v": 12.0, "voltage_max_v": 30.0},
+            ),
         ),
         Component(
             id=51,
             name="EduPower-160A",
             type="power_module",
             mass_kg=0.08,
-            parameters_json={
-                "max_current_a": 160.0,
-                "voltage_min_v": 12.0,
-                "voltage_max_v": 30.0,
-            },
+            parameters_json=_with_visual(
+                51,
+                {"max_current_a": 160.0, "voltage_min_v": 12.0, "voltage_max_v": 30.0},
+            ),
         ),
         Component(
             id=60,
             name="EduFC-V1",
             type="flight_controller",
             mass_kg=0.06,
-            parameters_json={"voltage_min_v": 5.0, "voltage_max_v": 30.0},
+            parameters_json=_with_visual(
+                60,
+                {"voltage_min_v": 5.0, "voltage_max_v": 30.0},
+            ),
         ),
         Component(
             id=61,
             name="EduFC-V2",
             type="flight_controller",
             mass_kg=0.055,
-            parameters_json={"voltage_min_v": 5.0, "voltage_max_v": 30.0},
+            parameters_json=_with_visual(
+                61,
+                {"voltage_min_v": 5.0, "voltage_max_v": 30.0},
+            ),
         ),
         Component(
             id=70,
             name="M8N",
             type="gnss",
             mass_kg=0.04,
-            parameters_json={"voltage_min_v": 4.5, "voltage_max_v": 5.5},
+            parameters_json=_with_visual(
+                70,
+                {"voltage_min_v": 4.5, "voltage_max_v": 5.5},
+            ),
         ),
         Component(
             id=80,
             name="EduCamera-300g",
             type="payload",
             mass_kg=0.30,
-            parameters_json={"mount": "bottom_center"},
+            parameters_json=_with_visual(80, {"mount": "bottom_center"}),
         ),
     ]
     return {component.id: component for component in components}
@@ -274,8 +343,13 @@ def build_seed_aircraft() -> AircraftDefinition:
 
 
 def seed_database(session: Session) -> None:
-    has_components = session.scalar(select(ComponentRecord.id).limit(1)) is not None
-    if not has_components:
+    seed_catalog = build_seed_catalog()
+    existing_records = {
+        record.id: record
+        for record in session.scalars(select(ComponentRecord)).all()
+    }
+
+    if not existing_records:
         session.add_all(
             [
                 ComponentRecord(
@@ -285,9 +359,29 @@ def seed_database(session: Session) -> None:
                     mass_kg=component.mass_kg,
                     parameters_json=component.parameters_json,
                 )
-                for component in build_seed_catalog().values()
+                for component in seed_catalog.values()
             ]
         )
+    else:
+        # Upgrade old local databases in place without changing the table schema.
+        # Only presentation metadata is synchronized; engineering values edited by
+        # a teacher/student are not overwritten.
+        for component_id, seed_component in seed_catalog.items():
+            record = existing_records.get(component_id)
+            if record is None:
+                session.add(
+                    ComponentRecord(
+                        id=seed_component.id,
+                        name=seed_component.name,
+                        type=seed_component.type,
+                        mass_kg=seed_component.mass_kg,
+                        parameters_json=seed_component.parameters_json,
+                    )
+                )
+                continue
+            parameters = dict(record.parameters_json or {})
+            parameters["_visual"] = seed_component.parameters_json["_visual"]
+            record.parameters_json = parameters
 
     has_aircraft = session.scalar(select(AircraftRecord.id).limit(1)) is not None
     if not has_aircraft:

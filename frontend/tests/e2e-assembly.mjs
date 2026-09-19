@@ -11,6 +11,13 @@ const browser = await chromium.launch({
   headless: true,
 })
 
+async function installCard(page, componentId) {
+  const card = page.locator(`[data-testid="component-card"][data-component-id="${componentId}"]`)
+  await card.waitFor({ state: 'visible' })
+  const button = card.getByTestId('component-install')
+  if (await button.isEnabled()) await button.click()
+}
+
 try {
   const page = await browser.newPage({ viewport: { width: 1366, height: 768 } })
   page.on('console', message => {
@@ -29,6 +36,7 @@ try {
   assert.equal(await page.locator('.assembly-step').count(), 7)
   assert.match(await page.locator('.inspector-panel').innerText(), /2\.920 kg/)
   assert.match(await page.locator('.inspector-panel').innerText(), /3\.07/)
+
   const layout = await page.evaluate(() => {
     const canvas = document.querySelector('.drone-scene canvas')
     const bottom = document.querySelector('.assembly-bottom')
@@ -46,25 +54,22 @@ try {
   assert.ok(layout.canvasHeight > 300)
   assert.ok(layout.bottom <= layout.viewportHeight + 1)
 
+  // Component Card replaces the old native select workflow.
   await page.locator('.assembly-step').nth(0).click()
-  const frameSelect = page.locator('.slot-picker select').first()
-  await frameSelect.selectOption('2')
-  await page.getByRole('button', { name: '更换组件' }).click()
+  assert.equal(await page.locator('.component-picker select').count(), 0)
+  assert.ok(await page.locator('[data-testid="component-card"]').count() >= 2)
+
+  await installCard(page, 2)
   await page.waitForFunction(
     () => document.querySelector('.inspector-panel')?.textContent?.includes('2.770 kg'),
   )
 
-  await frameSelect.selectOption('1')
-  await page.getByRole('button', { name: '更换组件' }).click()
+  await installCard(page, 1)
   await page.waitForFunction(
     () => document.querySelector('.inspector-panel')?.textContent?.includes('2.920 kg'),
   )
 
   await page.locator('.assembly-step').nth(1).click()
-  await page.locator('.slot-picker-head').first().click()
-  const selectedPartLabel = page.locator(
-    '.inspector-panel > .inspector-section:first-child .inspector-heading p',
-  )
   await page.waitForFunction(
     () =>
       document.querySelector(
@@ -72,26 +77,21 @@ try {
       )?.textContent === '电机',
   )
 
-  const canvas = page.locator('.drone-scene canvas')
-  const box = await canvas.boundingBox()
-  assert.ok(box)
-  for (const ratio of [0.5, 0.58, 0.64, 0.7]) {
-    await page.mouse.click(
-      box.x + box.width / 2,
-      box.y + box.height * ratio,
-    )
-    await page.waitForTimeout(100)
-    const selected = await selectedPartLabel.innerText()
-    if (selected === '机架') break
-  }
-  await page.waitForFunction(
-    () =>
-      document.querySelector(
-        '.inspector-panel > .inspector-section:first-child .inspector-heading p',
-      )?.textContent === '机架',
-  )
+  const motorCards = page.locator('[data-testid="component-card"][data-component-type="motor"]')
+  assert.ok(await motorCards.count() >= 2)
+  assert.equal(await motorCards.first().locator('img').isVisible(), true)
 
-  console.log('E2E PASS: assembly workflow, engineering refresh and 3D selection')
+  await page.waitForFunction(
+    () => window.__UAV_VISUAL_TEST__?.sceneReady === true,
+    undefined,
+    { timeout: 15000 },
+  )
+  const probe = await page.evaluate(() => window.__UAV_VISUAL_TEST__)
+  assert.ok(probe)
+  assert.equal(probe.selectedSlot, 'motor')
+  assert.ok(probe.loadedAssets.some(asset => asset.slot === 'motor'))
+
+  console.log('E2E PASS: component cards, engineering refresh and 3D visual probe')
 } finally {
   await browser.close()
 }

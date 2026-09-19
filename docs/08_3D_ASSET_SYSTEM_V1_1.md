@@ -1,89 +1,178 @@
 # UAV Studio 3D Asset System V1.1
 
+状态：**已接入；P0 Sprint 1 已完成运行时数据契约升级**
+
 ## 目标
 
-本补丁只升级 **3D 资产与渲染层**，不改动现有 FastAPI、工程计算、SimpleSimulator、TelemetryFrame、Local Flight Map 和 Replay 数据协议。
+3D资产层只负责显示：
 
-它解决当前 `DroneScene.vue` 主要依赖 `BoxGeometry / CylinderGeometry` 所造成的“功能正确但像教学 Demo”的问题。
+- 机架；
+- 电机；
+- ESC；
+- CW/CCW 螺旋桨；
+- 电池；
+- 电源模块；
+- 飞控；
+- GNSS；
+- 任务载荷。
+
+质量、CG、推重比、功率、续航和飞行状态仍来自后端工程模型与 `TelemetryFrame`。
 
 ## 现实边界
 
-本包模型是 **中等精度教学模型**，不是厂商 CAD，也不是照片级资产。模型能识别机架、外转子电机、ESC、CW/CCW 桨、电池、电源模块、飞控、GNSS 和云台相机，并让不同组件配置在 3D 上产生可见差异。
+当前资产是**中等精度教学模型**，不是厂商 CAD，也不是照片级渲染。
 
-所有缩略图由本包 GLB 几何直接渲染，不是概念效果图。
+目标是：
 
-## 当前组件映射
+> 组件类别看得懂、不同配置看得出、工程变化能解释。
 
-- `EduFrame-650` → `frame_650.glb`
-- `EduFrame-450` → `frame_450.glb`
-- `EduMotor-5010-360KV` → `motor_5010_360kv.glb`
-- `EduMotor-4008-500KV` → `motor_4008_500kv.glb`
-- `EduESC-30A / 40A` → 两种尺寸模型
-- `EduProp-15x5 / 14x4.8` → 各自 CW + CCW 模型
-- `EduBattery-6S-10000 / 16000` → 两种体积模型
-- `EduPower-120A / 160A` → 两种电源模块
-- `EduFC-V1 / V2` → 两种飞控
-- `M8N` → GNSS 模型
-- `EduCamera-300g` → 云台相机
+而不是展示每颗螺丝或真实品牌外观。
 
-## 架构
+## P0 Sprint 1 后的资产数据流
+
+运行时不再由前端根据 numeric Component ID 硬编码正式组件模型。
 
 ```text
+asset_manifest.json
+        ↓
+backend.seed
+        ↓
+Component.visual
+        ↓
+assetRegistry.ts（校验 / URL 解析）
+        ↓
+AircraftRenderer.ts
+        ↓
 DroneScene.vue
-    │
-    ├── AircraftRenderer.ts
-    │       ├── 根据 AircraftDefinition 查当前组件
-    │       ├── 读取组件安装位置
-    │       ├── M1~M4 生成 4 组电机/ESC/桨
-    │       └── 未安装组件使用半透明 Ghost 显示
-    │
-    ├── assetRegistry.ts
-    │       ├── Component ID → GLB
-    │       ├── Component ID → thumbnail
-    │       └── M1/M3 CCW, M2/M4 CW
-    │
-    └── modelLoader.ts
-            └── GLTFLoader + 缓存 + 材质克隆
 ```
 
-## 渲染升级
+`asset_manifest.json` 负责：
 
-V1.1 开启：
+- GLB 文件名；
+- CW / CCW 文件；
+- thumbnail；
+- 资产版本、单位和坐标说明。
 
-- GLB / glTF 组件模型；
-- Soft Shadow；
-- ACES Filmic Tone Mapping；
-- sRGB 输出；
-- RoomEnvironment 环境反射；
-- 关键光 + 补光；
-- 真实桨叶旋转（不再用圆盘）；
-- 组件选中蓝色高亮；
-- 未安装组件半透明 Ghost；
-- 可用的跟随 / 俯视 / 侧视 / 自由相机。
+后端把这些信息作为 `Component.visual` 暴露给前端。
 
-## 数据原则
-
-3D 只负责显示，不重新计算工程参数。质量、CG、推重比、续航和仿真数据仍由现有后端产生。
-
-飞行时继续使用同一 `TelemetryFrame`：
+## Component.visual
 
 ```text
-TelemetryFrame
-  ├── DroneScene
-  ├── LocalFlightMap
-  ├── RealtimeCharts
-  └── Replay
+visual
+├── asset_key
+├── file
+├── cw_file
+├── ccw_file
+├── thumbnail
+└── scale
 ```
 
-## 后续给学生扩展
+工程参数和视觉参数严格分开。
 
-学生增加新组件时，建议同时提交：
+物理算法禁止读取 `visual`。
 
-1. 组件工程数据；
-2. GLB 模型；
-3. 缩略图；
-4. `assetRegistry.ts` 映射；
-5. 对应测试；
-6. 一份简短 ADR，说明为什么这样建模。
+## SQLite向后兼容
 
-不要把 3D 模型路径塞进物理仿真逻辑，也不要让前端用模型尺寸替代工程参数。
+为了避免本学期中途要求学生重建数据库，视觉元数据持久化在已有：
+
+```text
+components.parameters_json._visual
+```
+
+API序列化时 `_visual` 被隐藏，只向前端公开：
+
+```text
+Component.visual
+```
+
+`parse_component_parameters()` 会忽略 `_visual`，因此它不参与工程计算。
+
+## Fail Loud
+
+已安装 Component 如果：
+
+- 没有 `visual`；
+- 没有 file / CW / CCW；
+- GLB加载失败；
+
+系统不允许偷偷换成另一个组件模型。
+
+应：
+
+1. Console 报错；
+2. 3D工作区显示资产异常；
+3. Visual Test Probe `sceneReady=false`。
+
+只有**空安装槽 Ghost**可以使用类别级教学占位资产。
+
+## Renderer职责
+
+`AircraftRenderer.ts`：
+
+- 根据 AircraftDefinition 找当前 Component；
+- 读取 `Component.visual`；
+- 加载 GLB；
+- M1~M4 生成四组动力组件；
+- 使用 CW/CCW 模型；
+- 未安装部件显示 Ghost；
+- 维护选中高亮；
+- 提供 raycast meshes；
+- 提供自动测试用资产/bounds快照。
+
+`DroneScene.vue`：
+
+- Three.js Scene / Camera / Lighting；
+- Telemetry姿态；
+- 推力、重力、风、轨迹；
+- 相机模式；
+- Visual Test Probe；
+- 资产错误UI。
+
+## Visual Test Probe
+
+开发/测试模式提供：
+
+```text
+window.__UAV_VISUAL_TEST__
+```
+
+它只读取真实场景：
+
+- loadedAssets
+- aircraftBounds
+- partBounds
+- mounts
+- cameraMode
+- selectedSlot
+- pixelRatio
+- sceneReady
+
+Probe 不得制造假数据用于“骗过测试”。
+
+## 当前仍未统一的安装坐标
+
+P0 Sprint 1 **尚未**完成 Engineering / Simulator / Renderer 的统一 Frame Mount System。
+
+当前 M1~M4 水平位置仍由 `motor_diagonal_m` 派生；其他部分位置仍使用现有 frame 参数。
+
+下一轮必须先写 Mount Contract RED tests，再完成：
+
+```text
+Frame.mount_points
+        ├── Engineering
+        ├── Simulator
+        └── AircraftRenderer
+```
+
+## Replay
+
+新实验记录保存 `Component.visual`。
+
+旧实验 JSON 没有视觉元数据时，后端 Replay 加载器只补当前视觉信息，不修改历史：
+
+- 质量；
+- 工程参数；
+- AircraftDefinition；
+- TelemetryFrame。
+
+因此旧实验保持可回放。

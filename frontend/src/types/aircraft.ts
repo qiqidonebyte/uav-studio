@@ -2,12 +2,22 @@ export type ComponentType = 'frame' | 'motor' | 'esc' | 'propeller' | 'battery' 
 
 export interface Vector3Value { x: number; y: number; z: number }
 
+export interface ComponentVisual {
+  asset_key: string
+  file?: string | null
+  cw_file?: string | null
+  ccw_file?: string | null
+  thumbnail?: string | null
+  scale: number
+}
+
 export interface Component {
   id: number
   name: string
   type: ComponentType
   mass_kg: number
   parameters_json: Record<string, unknown>
+  visual?: ComponentVisual | null
 }
 
 export interface AircraftDefinition {

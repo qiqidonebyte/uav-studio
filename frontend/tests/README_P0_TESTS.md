@@ -1,6 +1,6 @@
-# P0 Test-First Tests
+# P0 Test-First Tests — Sprint 1
 
-这组测试故意包含 RED。
+本组测试用于验证第一轮高优先级 P0 实现。
 
 ## 运行前
 
@@ -18,56 +18,32 @@ npm run dev -- --host 127.0.0.1 --port 5174
 然后：
 
 ```bash
+npm run test
+npm run build
 npm run test:p0:asset
 npm run test:p0:ui
 npm run test:p0:scene
 ```
 
-## 当前应该通过的方向
+## Sprint 1 应转为 GREEN 的契约
 
-Asset：
+- Component 拥有 `visual` 数据契约；
+- 3D 资产路径不再依赖前端 numeric-id registry；
+- 未知已安装组件不允许 silent fallback；
+- Assembly 使用 Component Card，不再以 `<select>` 为主要选件界面；
+- Component Card 有缩略图 / 名称 / 质量 / 工程参数；
+- `window.__UAV_VISUAL_TEST__` 可以读取真实场景状态；
+- 450/650、10000/16000 更换后 3D 资产和 bounds 变化；
+- 开发模式 Three.js pixelRatio 固定为 1，保证视觉测试稳定。
 
-- 文件存在；
-- GLB格式；
-- PNG格式；
-- 当前变体资产不同；
-- Manifest和Registry当前映射一致。
+## 下一轮仍未解决
 
-UI：
+Sprint 1 **没有**完成：
 
-- 三栏工作台；
-- 56px Topbar；
-- 中央 Canvas 尺寸；
-- 无水平溢出。
+- Frame mount_points 同时驱动 Engineering / Simulator / Renderer；
+- M1~M4 独立螺旋桨安装语义；
+- 故障组件库；
+- 装配错误点击后自动高亮具体部件；
+- Golden Screenshot 批准与 CI。
 
-## 当前应该失败的方向
-
-Asset：
-
-- 未知 Component 必须 fail loudly；
-- `Component` 数据契约拥有 visual metadata。
-
-UI：
-
-- 组件卡替代 `<select>`；
-- 卡片缩略图；
-- 卡片 name/mass/spec。
-
-Scene：
-
-- `window.__UAV_VISUAL_TEST__` 尚未实现，因此 Scene Contract 应 RED。
-
-## 重要
-
-不要把这些失败测试改成 `skip`。  
-下一阶段业务实现应该逐项使它们变绿。
-
-## Browser
-
-如果自动找不到浏览器，可以：
-
-```powershell
-$env:P0_BROWSER_PATH="C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-```
-
-或设置为本机 Chrome/Chromium。
+这些项目应该进入下一轮 RED Contract，而不是在本轮偷偷补成硬编码。

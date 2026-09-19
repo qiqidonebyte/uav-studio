@@ -12,12 +12,39 @@ function requireProbe(value) {
   return value
 }
 
+async function waitSceneReady(page) {
+  await page.waitForFunction(
+    () => window.__UAV_VISUAL_TEST__?.sceneReady === true,
+    undefined,
+    { timeout: 15000 },
+  )
+}
+
+async function installCard(page, componentId) {
+  const card = page.locator(`[data-testid="component-card"][data-component-id="${componentId}"]`)
+  await card.waitFor({ state: 'visible', timeout: 5000 })
+  const button = card.getByTestId('component-install')
+  if (await button.isEnabled()) await button.click()
+  await page.waitForFunction(
+    id => {
+      const probe = window.__UAV_VISUAL_TEST__
+      return Boolean(
+        probe?.sceneReady &&
+        probe.loadedAssets.some(asset => asset.componentId === id),
+      )
+    },
+    componentId,
+    { timeout: 15000 },
+  )
+}
+
 try {
   const page = await browser.newPage({
     viewport: { width: 1600, height: 1000 },
     locale: 'zh-CN',
   })
   await openAssembly(page)
+  await waitSceneReady(page)
 
   await run('P0-SCENE-001', 'visual test probe exists', async () => {
     requireProbe(await probe(page))
@@ -70,51 +97,46 @@ try {
 
   await run('P0-SCENE-008', 'camera button changes the real cameraMode observed by probe', async () => {
     await page.getByRole('button', { name: '跟随', exact: true }).click()
-    await page.waitForTimeout(150)
+    await page.waitForTimeout(100)
     const value = requireProbe(await probe(page))
     assert.equal(value.cameraMode, 'follow')
   })
 
   await run('P0-SCENE-009', 'selected assembly category is reflected by scene probe', async () => {
     await page.locator('.assembly-step').nth(1).click()
+    await page.waitForTimeout(50)
     const value = requireProbe(await probe(page))
-    assert.ok(['motor', 'esc'].includes(value.selectedSlot), `selectedSlot=${value.selectedSlot}`)
+    assert.equal(value.selectedSlot, 'motor')
   })
 
   await run('P0-SCENE-010', '650 to 450 frame switch changes loaded frame asset and whole-aircraft bounds', async () => {
+    await page.locator('.assembly-step').nth(0).click()
+    await installCard(page, 1) // normalize baseline first
+
     const before = requireProbe(await probe(page))
     const beforeFrame = before.loadedAssets.find(item => item.slot === 'frame')
     const beforeWidth = before.aircraftBounds.width
 
-    const frameStep = page.locator('.assembly-step').nth(0)
-    await frameStep.click()
-
-    const frame450 = page.locator('[data-testid="component-card"][data-component-id="2"]')
-    await frame450.waitFor({ state: 'visible', timeout: 1000 })
-    await frame450.getByTestId('component-install').click()
-    await page.waitForTimeout(300)
-
+    await installCard(page, 2)
     const after = requireProbe(await probe(page))
     const afterFrame = after.loadedAssets.find(item => item.slot === 'frame')
     assert.ok(beforeFrame && afterFrame)
     assert.notEqual(afterFrame.url, beforeFrame.url)
     assert.ok(after.aircraftBounds.width < beforeWidth, `${after.aircraftBounds.width} !< ${beforeWidth}`)
+
+    await installCard(page, 1) // restore reference configuration
   })
 
   await run('P0-SCENE-011', '10000 to 16000 battery switch changes loaded asset and battery bounds', async () => {
-    const supplyStep = page.locator('.assembly-step').nth(2)
-    await supplyStep.click()
+    await page.locator('.assembly-step').nth(2).click()
+    await installCard(page, 40) // normalize baseline first
 
     const before = requireProbe(await probe(page))
     const beforeBattery = before.loadedAssets.find(item => item.slot === 'battery')
     const beforeBounds = before.partBounds?.battery
     assert.ok(beforeBattery && beforeBounds)
 
-    const battery16000 = page.locator('[data-testid="component-card"][data-component-id="41"]')
-    await battery16000.waitFor({ state: 'visible', timeout: 1000 })
-    await battery16000.getByTestId('component-install').click()
-    await page.waitForTimeout(300)
-
+    await installCard(page, 41)
     const after = requireProbe(await probe(page))
     const afterBattery = after.loadedAssets.find(item => item.slot === 'battery')
     const afterBounds = after.partBounds?.battery
@@ -124,6 +146,8 @@ try {
     const beforeVolume = beforeBounds.width * beforeBounds.height * beforeBounds.depth
     const afterVolume = afterBounds.width * afterBounds.height * afterBounds.depth
     assert.ok(afterVolume > beforeVolume, `${afterVolume} !> ${beforeVolume}`)
+
+    await installCard(page, 40) // restore reference configuration
   })
 
   finish()
