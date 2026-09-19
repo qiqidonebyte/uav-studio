@@ -99,6 +99,7 @@
           <div class="about-brand"><img src="/branding/zjitc-campus-mark.svg" alt="浙江工贸" /><div><b>UAV Studio</b><span>无人机数字设计与飞行验证平台</span></div></div>
           <dl>
             <div><dt>建设单位</dt><dd>浙江工贸职业技术学院</dd></div>
+            <div><dt>作者</dt><dd>小龙老师</dd></div>
             <div><dt>产品版本</dt><dd>Reference V1</dd></div>
             <div><dt>3D Asset</dt><dd>V1.1</dd></div>
             <div><dt>组件数据库</dt><dd>V1</dd></div>
