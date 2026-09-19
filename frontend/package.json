@@ -8,12 +8,16 @@
     "build": "vue-tsc --noEmit && vite build",
     "e2e": "node tests/e2e-assembly.mjs",
     "e2e:flight": "node tests/e2e-flight.mjs",
+    "e2e:flight-controls": "node tests/e2e-flight-controls.mjs",
+    "e2e:component-card": "node tests/e2e-component-card-image.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:p0:asset": "vitest run tests/p0-asset-contract.test.ts",
     "test:p0:ui": "node tests/p0-ui-contract.mjs",
     "test:p0:scene": "node tests/p0-scene-contract.mjs",
-    "test:p0:capture": "node tests/p0-visual-capture.mjs"
+    "test:p0:capture": "node tests/p0-visual-capture.mjs",
+    "e2e:component-library": "node tests/e2e-component-library.mjs",
+    "e2e:settings": "node tests/e2e-settings.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",

@@ -1,33 +1,37 @@
 <template>
   <div class="workbench-grid flight-grid">
-    <aside class="panel left-panel">
+    <aside class="panel left-panel flight-control-panel">
       <section class="panel-section">
         <h3>实验控制</h3>
         <div class="control-block">
           <span class="control-label">仿真</span>
           <div class="button-grid">
             <button
+              data-testid="flight-start"
               class="primary-blue"
-              :disabled="!assemblyReady || busy"
+              :disabled="!controls.canStart"
               @click="perform(store.start)"
             >
               开始
             </button>
             <button
-              :disabled="store.simulationStatus !== 'RUNNING' || busy"
+              data-testid="flight-pause"
+              :disabled="!controls.canPause"
               @click="perform(store.pause)"
             >
               暂停
             </button>
             <button
-              :disabled="store.simulationId === null || busy"
+              data-testid="flight-reset"
+              :disabled="!controls.canReset"
               @click="perform(store.reset)"
             >
               复位
             </button>
             <button
+              data-testid="flight-stop"
               class="danger-button"
-              :disabled="store.simulationId === null || busy"
+              :disabled="!controls.canStop"
               @click="perform(store.stop)"
             >
               停止
@@ -42,11 +46,12 @@
         <div class="control-block">
           <span class="control-label">飞行</span>
           <button
+            data-testid="flight-arm"
             class="secondary-action"
-            :disabled="store.simulationStatus !== 'RUNNING' || store.telemetry.armed || busy"
+            :disabled="!controls.canArm"
             @click="perform(store.arm)"
           >
-            解锁
+            {{ store.telemetry.armed ? '已解锁' : '解锁' }}
           </button>
           <label class="field-row">
             <span>目标高度</span>
@@ -54,19 +59,24 @@
           </label>
           <div class="button-grid">
             <button
+              data-testid="flight-takeoff"
               class="primary-blue"
-              :disabled="!store.telemetry.armed || busy"
+              :disabled="!controls.canTakeoff"
               @click="perform(store.takeoff)"
             >
               起飞
             </button>
             <button
-              :disabled="!store.telemetry.armed || busy"
+              data-testid="flight-land"
+              :disabled="!controls.canLand"
               @click="perform(store.land)"
             >
               降落
             </button>
           </div>
+          <p class="flight-command-hint" data-testid="flight-command-hint">
+            {{ flightCommandHint }}
+          </p>
         </div>
 
         <div class="control-block">
@@ -81,7 +91,7 @@
           </label>
           <button
             class="secondary-action"
-            :disabled="store.simulationId === null || busy"
+            :disabled="!controls.canApplyWind"
             @click="perform(store.applyWind)"
           >
             应用风场
@@ -95,7 +105,7 @@
           </p>
           <div class="button-grid">
             <button
-              :disabled="!pendingTarget || !store.telemetry.armed || busy"
+              :disabled="!pendingTarget || !controls.canSetTarget"
               @click="perform(applyPendingTarget)"
             >
               设为目标点
@@ -110,7 +120,7 @@
           <button
             class="ghost-action waypoint-clear"
             :disabled="store.waypoints.length === 0 || busy"
-              @click="perform(clearWaypoints)"
+            @click="perform(clearWaypoints)"
           >
             清空航点
           </button>
@@ -244,7 +254,7 @@
     </aside>
 
     <section class="bottom-panel">
-      <RealtimeCharts :telemetry="store.telemetry" :history="store.history" />
+      <RealtimeCharts :telemetry="store.telemetry" :history="store.history" :window-seconds="settingsStore.settings.flight.chart_window_seconds" />
     </section>
   </div>
 </template>
@@ -256,16 +266,40 @@ import LocalFlightMap from '../components/LocalFlightMap.vue'
 import RealtimeCharts from '../components/RealtimeCharts.vue'
 import { useAssemblyStore } from '../stores/assembly'
 import { useSimulationStore } from '../stores/simulation'
+import { useSettingsStore } from '../stores/settings'
+import { flightControlAvailability } from '../utils/flightControlGuards'
 
 const assemblyStore = useAssemblyStore()
 const store = useSimulationStore()
-const viewMode = ref<'3d' | 'map' | 'split'>('split')
+const settingsStore = useSettingsStore()
+const viewMode = ref<'3d' | 'map' | 'split'>(settingsStore.settings.flight.default_view)
 const busy = ref(false)
 const pendingTarget = ref<{ x: number; y: number } | null>(null)
 
 const assemblyReady = computed(
   () => assemblyStore.validation.passed && assemblyStore.engineering !== null,
 )
+const controls = computed(() =>
+  flightControlAvailability({
+    assemblyReady: assemblyReady.value,
+    busy: busy.value,
+    simulationId: store.simulationId,
+    simulationStatus: store.simulationStatus,
+    armed: store.telemetry.armed,
+    flightMode: store.telemetry.flight_mode,
+    airborne: store.airborne,
+  }),
+)
+const flightCommandHint = computed(() => {
+  if (!assemblyReady.value) return '先通过装配检查，才能开始飞行实验。'
+  if (store.simulationStatus !== 'RUNNING') return '先点击“开始”启动仿真，再进行解锁。'
+  if (!store.telemetry.armed) return '仿真已运行：请先“解锁”，解锁后“起飞”才会启用。'
+  if (store.telemetry.flight_mode === 'ARMED') return '已解锁：可以设置目标高度并起飞。'
+  if (store.telemetry.flight_mode === 'TAKING_OFF') return '正在起飞：起飞按钮锁定，可执行降落。'
+  if (store.telemetry.flight_mode === 'HOVERING') return '正在悬停：可调整环境、目标点，或执行降落。'
+  if (store.telemetry.flight_mode === 'LANDING') return '正在降落：等待返回待机并自动上锁。'
+  return '按 开始 → 解锁 → 起飞 → 降落 的顺序操作。'
+})
 const massText = computed(() =>
   assemblyStore.engineering
     ? `${assemblyStore.engineering.total_mass_kg.toFixed(3)} kg`
@@ -286,7 +320,16 @@ const connectionText = computed(() => {
 })
 
 onMounted(async () => {
-  await assemblyStore.initialize()
+  await Promise.all([assemblyStore.initialize(), settingsStore.initialize()])
+  if (store.simulationId === null) {
+    store.targetAltitude = settingsStore.settings.flight.default_altitude_m
+    store.windSpeed = settingsStore.settings.flight.default_wind_speed_mps
+    store.windDirection = settingsStore.settings.flight.default_wind_direction_deg
+    viewMode.value = settingsStore.settings.flight.default_view
+    if (settingsStore.settings.flight.auto_create_simulation && assemblyReady.value) {
+      try { await store.createSimulation() } catch { /* store exposes the error */ }
+    }
+  }
 })
 
 onBeforeUnmount(async () => {
@@ -341,3 +384,36 @@ function deg(radians: number): string {
   return ((radians * 180) / Math.PI).toFixed(2)
 }
 </script>
+
+<style scoped>
+.flight-control-panel button:disabled {
+  cursor: not-allowed !important;
+  opacity: 1 !important;
+  color: #98a4b3 !important;
+  background: #edf1f5 !important;
+  border-color: #d8e0ea !important;
+  box-shadow: none !important;
+  filter: none !important;
+  transform: none !important;
+}
+
+.flight-control-panel .primary-blue:disabled,
+.flight-control-panel .danger-button:disabled,
+.flight-control-panel .secondary-action:disabled {
+  color: #98a4b3 !important;
+  background: #edf1f5 !important;
+  border-color: #d8e0ea !important;
+}
+
+.flight-command-hint {
+  margin: 8px 0 0;
+  min-height: 30px;
+  padding: 7px 9px;
+  border: 1px solid #e1e7ef;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1.45;
+}
+</style>

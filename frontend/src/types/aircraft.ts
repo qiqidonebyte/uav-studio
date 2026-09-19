@@ -1,6 +1,27 @@
 export type ComponentType = 'frame' | 'motor' | 'esc' | 'propeller' | 'battery' | 'power_module' | 'flight_controller' | 'gnss' | 'payload'
 
+export type MotorName = 'M1' | 'M2' | 'M3' | 'M4'
+export type PropellerDirection = 'CW' | 'CCW'
+export type RotorDirection = PropellerDirection
+
 export interface Vector3Value { x: number; y: number; z: number }
+
+export interface FrameMountPoints {
+  motor_m1: Vector3Value
+  motor_m2: Vector3Value
+  motor_m3: Vector3Value
+  motor_m4: Vector3Value
+  esc_m1: Vector3Value
+  esc_m2: Vector3Value
+  esc_m3: Vector3Value
+  esc_m4: Vector3Value
+  battery: Vector3Value
+  power_module: Vector3Value
+  flight_controller: Vector3Value
+  gnss: Vector3Value
+  payload_front: Vector3Value
+  payload_bottom: Vector3Value
+}
 
 export interface ComponentVisual {
   asset_key: string
@@ -34,6 +55,7 @@ export interface AircraftDefinition {
   payload_id?: number | null
   gnss_position_m?: Vector3Value | null
   payload_position_m?: Vector3Value | null
+  propeller_directions?: Record<MotorName, PropellerDirection> | null
 }
 
 export interface InertiaEstimate {

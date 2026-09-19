@@ -26,9 +26,10 @@
 
     <div v-if="telemetry" class="wind-readout">风场 {{ telemetry.wind.speed_mps.toFixed(1) }} m/s</div>
 
-    <div v-if="assemblyMode" class="scene-selection">
+    <div v-if="assemblyMode" :class="['scene-selection', { issue: issueSlots.length > 0 }]">
       <b>{{ selectedSlot ? SLOT_LABELS[selectedSlot] : '选择部件' }}</b>
-      <span>{{ selectedSlot ? '蓝色高亮为当前检查部件' : '点击机架、电机、桨、电池等模型查看详情' }}</span>
+      <span v-if="issueSlots.length > 0">红色高亮为当前工程检查问题</span>
+      <span v-else>{{ selectedSlot ? '蓝色高亮为当前检查部件' : '点击机架、电机、桨、电池等模型查看详情' }}</span>
     </div>
 
     <div :class="['scene-legend', { 'scene-legend-assembly': assemblyMode }]">
@@ -36,6 +37,7 @@
         <span class="legend-green"></span>已安装
         <span class="legend-gray"></span>待安装
         <span class="legend-yellow"></span>重心
+        <span class="legend-issue"></span>问题定位
       </template>
       <template v-else>
         <span class="legend-blue"></span>旋翼推力
@@ -51,11 +53,12 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
-import type { AircraftDefinition, AircraftEngineeringSummary, Component } from '../types/aircraft'
+import type { AircraftDefinition, AircraftEngineeringSummary, Component, MotorName } from '../types/aircraft'
 import type { TelemetryFrame } from '../types/telemetry'
-import { motorPositionsToThree, simulationPoseToThree, simulationVectorToThree } from '../three/coordinates'
+import { simulationPoseToThree, simulationVectorToThree } from '../three/coordinates'
 import { AircraftRenderer } from '../three/AircraftRenderer'
 import { SLOT_LABELS, type AssemblySlot } from '../utils/assembly'
+import { useSettingsStore } from '../stores/settings'
 
 const props = withDefaults(
   defineProps<{
@@ -63,6 +66,8 @@ const props = withDefaults(
     aircraft?: AircraftDefinition | null
     components?: Component[]
     selectedSlot?: AssemblySlot | null
+    issueSlots?: AssemblySlot[]
+    issueMounts?: MotorName[]
     engineering?: AircraftEngineeringSummary | null
     interactive?: boolean
   }>(),
@@ -71,6 +76,8 @@ const props = withDefaults(
     aircraft: null,
     components: () => [],
     selectedSlot: null,
+    issueSlots: () => [],
+    issueMounts: () => [],
     engineering: null,
     interactive: false,
   },
@@ -87,6 +94,7 @@ const assetError = ref('')
 const cameraMode = ref<'follow' | 'top' | 'side' | 'free'>('free')
 const assemblyMode = computed(() => props.interactive)
 const visualTestProbeEnabled = import.meta.env.DEV || import.meta.env.MODE === 'test'
+const settingsStore = useSettingsStore()
 
 let scene: THREE.Scene
 let camera: THREE.PerspectiveCamera
@@ -101,6 +109,9 @@ let cgMarker: THREE.Mesh
 let gravityArrow: THREE.ArrowHelper
 let windArrow: THREE.ArrowHelper
 let trajectoryLine: THREE.Line
+let gridHelper: THREE.GridHelper
+let axesHelper: THREE.AxesHelper
+let keyLight: THREE.DirectionalLight
 let trajectoryPoints: THREE.Vector3[] = []
 let thrustArrows: THREE.ArrowHelper[] = []
 let animationId = 0
@@ -109,19 +120,54 @@ let lastTelemetryTime = -1
 let rebuildGeneration = 0
 const raycaster = new THREE.Raycaster()
 const pointer = new THREE.Vector2()
+const cameraTargetState = new THREE.Vector3(0, 0.08, 0)
 
-function frameComponent(): Component | null {
-  if (!props.aircraft?.frame_id) return null
-  return props.components.find(component => component.id === props.aircraft?.frame_id) ?? null
+type SmoothFlightState = {
+  initialized: boolean
+  targetPosition: THREE.Vector3
+  renderedPosition: THREE.Vector3
+  targetQuaternion: THREE.Quaternion
+  renderedQuaternion: THREE.Quaternion
+  targetCg: THREE.Vector3
+  renderedCg: THREE.Vector3
+  targetThrusts: number[]
+  renderedThrusts: number[]
+  targetGravityN: number
+  renderedGravityN: number
+  targetWindVector: THREE.Vector3
+  renderedWindVector: THREE.Vector3
 }
 
-function motorDiagonal(): number {
-  const value = frameComponent()?.parameters_json.motor_diagonal_m
-  return typeof value === 'number' && value > 0 ? value : 0.65
+const flightSmoothing: SmoothFlightState = {
+  initialized: false,
+  targetPosition: new THREE.Vector3(),
+  renderedPosition: new THREE.Vector3(),
+  targetQuaternion: new THREE.Quaternion(),
+  renderedQuaternion: new THREE.Quaternion(),
+  targetCg: new THREE.Vector3(),
+  renderedCg: new THREE.Vector3(),
+  targetThrusts: [0, 0, 0, 0],
+  renderedThrusts: [0, 0, 0, 0],
+  targetGravityN: 0,
+  renderedGravityN: 0,
+  targetWindVector: new THREE.Vector3(-1, 0, 0),
+  renderedWindVector: new THREE.Vector3(-1, 0, 0),
 }
 
-function mountY(): number {
-  return 0.066 * (motorDiagonal() / 0.65)
+function resetFlightSmoothing(): void {
+  flightSmoothing.initialized = false
+  flightSmoothing.targetPosition.set(0, 0, 0)
+  flightSmoothing.renderedPosition.set(0, 0, 0)
+  flightSmoothing.targetQuaternion.identity()
+  flightSmoothing.renderedQuaternion.identity()
+  flightSmoothing.targetCg.set(0, 0, 0)
+  flightSmoothing.renderedCg.set(0, 0, 0)
+  flightSmoothing.targetThrusts = [0, 0, 0, 0]
+  flightSmoothing.renderedThrusts = [0, 0, 0, 0]
+  flightSmoothing.targetGravityN = 0
+  flightSmoothing.renderedGravityN = 0
+  flightSmoothing.targetWindVector.set(-1, 0, 0)
+  flightSmoothing.renderedWindVector.set(-1, 0, 0)
 }
 
 function disposeObject(root: THREE.Object3D): void {
@@ -177,14 +223,11 @@ function clearOverlay(): void {
 
 function buildOverlay(): void {
   clearOverlay()
-  const diagonal = motorDiagonal()
-  const motors = motorPositionsToThree(diagonal)
-  const y = mountY()
-  const directions = ['逆时针', '顺时针', '逆时针', '顺时针']
+  const mounts = aircraftRenderer.motorMountsSnapshot()
+  const directions = props.aircraft?.propeller_directions
 
-  ;(['M1', 'M2', 'M3', 'M4'] as const).forEach((name, index) => {
-    const p = motors[name].clone()
-    p.y = y
+  ;(['M1', 'M2', 'M3', 'M4'] as MotorName[]).forEach((name, index) => {
+    const p = simulationVectorToThree(mounts[name])
     const arrow = new THREE.ArrowHelper(
       new THREE.Vector3(0, 1, 0),
       p.clone().add(new THREE.Vector3(0, 0.09, 0)),
@@ -195,7 +238,12 @@ function buildOverlay(): void {
     )
     thrustArrows.push(arrow)
     overlayGroup.add(arrow)
-    addLabelSprite(`${name} ${directions[index]}`, p.clone().add(new THREE.Vector3(0, 0.34, 0)))
+    const direction = directions?.[name] ?? (index % 2 === 0 ? 'CCW' : 'CW')
+    addLabelSprite(
+      `${name} ${direction === 'CCW' ? '逆时针' : '顺时针'}`,
+      p.clone().add(new THREE.Vector3(0, 0.34, 0)),
+      props.issueMounts.includes(name) ? '#b42318' : '#1f4f8f',
+    )
   })
 
   cgMarker = new THREE.Mesh(
@@ -239,6 +287,9 @@ function syncVisualTestProbe(): void {
     pixelRatio: renderer.getPixelRatio(),
     cameraMode: cameraMode.value,
     selectedSlot: props.selectedSlot ?? null,
+    issueSlots: [...props.issueSlots],
+    issueMounts: [...props.issueMounts],
+    propellerDirections: props.aircraft?.propeller_directions ?? null,
     loadedAssets: aircraftRenderer.loadedAssetsSnapshot(),
     aircraftBounds: aircraftRenderer.aircraftBoundsSnapshot(),
     partBounds: aircraftRenderer.partBoundsSnapshot(),
@@ -257,7 +308,9 @@ async function rebuildAircraftAssets(): Promise<void> {
     if (generation !== rebuildGeneration) return
     buildOverlay()
     applyAssemblyState()
-    if (props.telemetry) updateFlightScene(props.telemetry)
+    fitAircraftToView()
+    resetFlightSmoothing()
+    if (props.telemetry) ingestTelemetryFrame(props.telemetry)
   } catch (error) {
     if (generation !== rebuildGeneration) return
     assetError.value = errorText(error)
@@ -283,17 +336,17 @@ function buildWorld(): void {
   vehicleGroup.add(overlayGroup)
 
   scene.add(new THREE.HemisphereLight(0xffffff, 0x6f8095, 1.45))
-  const key = new THREE.DirectionalLight(0xffffff, 2.0)
-  key.position.set(3.8, 6.5, 4.8)
-  key.castShadow = true
-  key.shadow.mapSize.set(2048, 2048)
-  key.shadow.camera.near = 0.1
-  key.shadow.camera.far = 22
-  key.shadow.camera.left = -5
-  key.shadow.camera.right = 5
-  key.shadow.camera.top = 5
-  key.shadow.camera.bottom = -5
-  scene.add(key)
+  keyLight = new THREE.DirectionalLight(0xffffff, 1.9)
+  keyLight.position.set(3.8, 6.5, 4.8)
+  keyLight.castShadow = true
+  keyLight.shadow.mapSize.set(2048, 2048)
+  keyLight.shadow.camera.near = 0.1
+  keyLight.shadow.camera.far = 22
+  keyLight.shadow.camera.left = -5
+  keyLight.shadow.camera.right = 5
+  keyLight.shadow.camera.top = 5
+  keyLight.shadow.camera.bottom = -5
+  scene.add(keyLight)
 
   const fill = new THREE.DirectionalLight(0xb9d7ff, 0.65)
   fill.position.set(-4, 2.5, -3)
@@ -308,18 +361,18 @@ function buildWorld(): void {
   ground.receiveShadow = true
   scene.add(ground)
 
-  const grid = new THREE.GridHelper(18, 36, 0x9fb1c5, 0xd3dde8)
-  grid.position.y = -0.158
-  const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material]
+  gridHelper = new THREE.GridHelper(18, 36, 0x9fb1c5, 0xd3dde8)
+  gridHelper.position.y = -0.158
+  const gridMaterials = Array.isArray(gridHelper.material) ? gridHelper.material : [gridHelper.material]
   gridMaterials.forEach(material => {
-    material.opacity = 0.52
+    material.opacity = 0.38
     material.transparent = true
   })
-  scene.add(grid)
+  scene.add(gridHelper)
 
-  const axes = new THREE.AxesHelper(0.62)
-  axes.position.set(-2.15, -0.145, 1.45)
-  scene.add(axes)
+  axesHelper = new THREE.AxesHelper(0.62)
+  axesHelper.position.set(-2.15, -0.145, 1.45)
+  scene.add(axesHelper)
 
   windArrow = new THREE.ArrowHelper(
     new THREE.Vector3(-1, 0, 0),
@@ -333,21 +386,63 @@ function buildWorld(): void {
 
   trajectoryLine = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0)]),
-    new THREE.LineBasicMaterial({ color: 0x2563eb, transparent: true, opacity: 0.75 }),
+    new THREE.LineBasicMaterial({ color: 0x2563eb, transparent: true, opacity: 0.68 }),
   )
   scene.add(trajectoryLine)
 }
 
+function displayPixelRatio(): number {
+  if (visualTestProbeEnabled) return 1
+  const quality = settingsStore.settings.display_3d.quality
+  if (quality === 'performance') return 1
+  if (quality === 'high') return Math.min(window.devicePixelRatio, 2)
+  return Math.min(window.devicePixelRatio, 1.5)
+}
+
+function shadowMapSize(): number {
+  const quality = settingsStore.settings.display_3d.shadows
+  if (quality === 'low') return 1024
+  if (quality === 'high') return 4096
+  return 2048
+}
+
+function applyDisplaySettings(): void {
+  if (!renderer || !scene) return
+  const settings = settingsStore.settings.display_3d
+  renderer.setPixelRatio(displayPixelRatio())
+  renderer.shadowMap.enabled = settings.shadows !== 'off'
+  if (keyLight) {
+    keyLight.castShadow = settings.shadows !== 'off'
+    const size = shadowMapSize()
+    keyLight.shadow.mapSize.set(size, size)
+  }
+  scene.environment = settings.environment_reflection ? environmentTexture : null
+  if (gridHelper) gridHelper.visible = settings.show_grid
+  if (axesHelper) axesHelper.visible = settings.show_axes
+  if (cgMarker) cgMarker.visible = settings.show_cg && (assemblyMode.value ? Boolean(props.engineering) : Boolean(props.telemetry))
+  thrustArrows.forEach(arrow => { arrow.visible = settings.show_thrust_vectors && !assemblyMode.value })
+  if (gravityArrow) gravityArrow.visible = settings.show_gravity_vector && !assemblyMode.value
+  if (windArrow) windArrow.visible = settings.show_wind_vector && !assemblyMode.value
+  if (trajectoryLine) trajectoryLine.visible = settings.show_trajectory && !assemblyMode.value
+  resize()
+}
+
 function applyAssemblyState(): void {
   if (!aircraftRenderer || !overlayGroup) return
-  aircraftRenderer.applyAssemblyState(props.aircraft, props.selectedSlot ?? null)
-  thrustArrows.forEach(arrow => { arrow.visible = !assemblyMode.value })
-  if (gravityArrow) gravityArrow.visible = !assemblyMode.value
-  if (windArrow) windArrow.visible = !assemblyMode.value
-  if (trajectoryLine) trajectoryLine.visible = !assemblyMode.value
+  aircraftRenderer.applyAssemblyState(
+    props.aircraft,
+    props.selectedSlot ?? null,
+    props.issueSlots,
+    props.issueMounts,
+  )
+  const display = settingsStore.settings.display_3d
+  thrustArrows.forEach(arrow => { arrow.visible = display.show_thrust_vectors && !assemblyMode.value })
+  if (gravityArrow) gravityArrow.visible = display.show_gravity_vector && !assemblyMode.value
+  if (windArrow) windArrow.visible = display.show_wind_vector && !assemblyMode.value
+  if (trajectoryLine) trajectoryLine.visible = display.show_trajectory && !assemblyMode.value
 
   if (cgMarker) {
-    cgMarker.visible = assemblyMode.value ? Boolean(props.engineering) : Boolean(props.telemetry)
+    cgMarker.visible = display.show_cg && (assemblyMode.value ? Boolean(props.engineering) : Boolean(props.telemetry))
     if (props.engineering) {
       cgMarker.position.copy(simulationVectorToThree(props.engineering.center_of_gravity_m))
     }
@@ -355,42 +450,96 @@ function applyAssemblyState(): void {
   syncVisualTestProbe()
 }
 
-function updateFlightScene(frame: TelemetryFrame): void {
+function addTrajectoryPoint(point: THREE.Vector3): void {
+  const last = trajectoryPoints[trajectoryPoints.length - 1]
+  if (!last || last.distanceTo(point) > 0.05) {
+    trajectoryPoints.push(point)
+    const limit = Math.max(100, settingsStore.settings.display_3d.trajectory_points)
+    while (trajectoryPoints.length > limit) trajectoryPoints.shift()
+    trajectoryLine.geometry.dispose()
+    trajectoryLine.geometry = new THREE.BufferGeometry().setFromPoints(trajectoryPoints)
+  }
+}
+
+function ingestTelemetryFrame(frame: TelemetryFrame): void {
   if (!vehicleGroup || !overlayGroup) return
   const pose = simulationPoseToThree(frame.position, frame.attitude)
-  vehicleGroup.position.copy(pose.position)
-  vehicleGroup.rotation.copy(pose.rotation)
-
-  if (cgMarker) {
-    cgMarker.visible = true
-    cgMarker.position.copy(simulationVectorToThree(frame.center_of_gravity))
-  }
-  frame.motors.thrusts_n.forEach((thrust, index) => {
-    thrustArrows[index]?.setLength(0.16 + Math.min(1.0, thrust / 16), 0.095, 0.055)
-  })
-  gravityArrow?.setLength(0.30 + Math.min(0.68, frame.forces.gravity_n / 62), 0.10, 0.06)
-  gravityArrow?.setRotationFromQuaternion(vehicleGroup.quaternion.clone().invert())
-
-  const radians = (frame.wind.direction_deg * Math.PI) / 180
-  windArrow?.setDirection(
-    new THREE.Vector3(-Math.cos(radians), 0, Math.sin(radians)).normalize(),
-  )
-  windArrow?.setLength(0.42 + Math.min(1.5, frame.wind.speed_mps / 5), 0.14, 0.08)
 
   if (frame.t < lastTelemetryTime) {
     trajectoryPoints = []
     trajectoryLine.geometry.dispose()
     trajectoryLine.geometry = new THREE.BufferGeometry().setFromPoints([pose.position.clone()])
+    resetFlightSmoothing()
   }
   lastTelemetryTime = frame.t
-  const point = pose.position.clone()
-  const last = trajectoryPoints[trajectoryPoints.length - 1]
-  if (!last || last.distanceTo(point) > 0.05) {
-    trajectoryPoints.push(point)
-    if (trajectoryPoints.length > 600) trajectoryPoints.shift()
-    trajectoryLine.geometry.dispose()
-    trajectoryLine.geometry = new THREE.BufferGeometry().setFromPoints(trajectoryPoints)
+
+  flightSmoothing.targetPosition.copy(pose.position)
+  flightSmoothing.targetQuaternion.setFromEuler(pose.rotation)
+  flightSmoothing.targetCg.copy(simulationVectorToThree(frame.center_of_gravity))
+  flightSmoothing.targetThrusts = [...frame.motors.thrusts_n]
+  flightSmoothing.targetGravityN = frame.forces.gravity_n
+
+  const radians = (frame.wind.direction_deg * Math.PI) / 180
+  flightSmoothing.targetWindVector.set(-Math.cos(radians), 0, Math.sin(radians))
+  if (flightSmoothing.targetWindVector.lengthSq() < 1e-6) {
+    flightSmoothing.targetWindVector.set(-1, 0, 0)
   }
+  flightSmoothing.targetWindVector.normalize().multiplyScalar(frame.wind.speed_mps)
+
+  if (!flightSmoothing.initialized) {
+    flightSmoothing.renderedPosition.copy(flightSmoothing.targetPosition)
+    flightSmoothing.renderedQuaternion.copy(flightSmoothing.targetQuaternion)
+    flightSmoothing.renderedCg.copy(flightSmoothing.targetCg)
+    flightSmoothing.renderedThrusts = [...flightSmoothing.targetThrusts]
+    flightSmoothing.renderedGravityN = flightSmoothing.targetGravityN
+    flightSmoothing.renderedWindVector.copy(flightSmoothing.targetWindVector)
+    vehicleGroup.position.copy(flightSmoothing.renderedPosition)
+    vehicleGroup.quaternion.copy(flightSmoothing.renderedQuaternion)
+    flightSmoothing.initialized = true
+  }
+
+  addTrajectoryPoint(pose.position.clone())
+}
+
+function advanceSmoothedFlight(dt: number): void {
+  if (!props.telemetry || !flightSmoothing.initialized) return
+
+  const positionAlpha = 1 - Math.exp(-dt * 11)
+  const rotationAlpha = 1 - Math.exp(-dt * 13)
+  const scalarAlpha = 1 - Math.exp(-dt * 8)
+
+  flightSmoothing.renderedPosition.lerp(flightSmoothing.targetPosition, positionAlpha)
+  flightSmoothing.renderedQuaternion.slerp(flightSmoothing.targetQuaternion, rotationAlpha)
+  flightSmoothing.renderedCg.lerp(flightSmoothing.targetCg, positionAlpha)
+  flightSmoothing.renderedWindVector.lerp(flightSmoothing.targetWindVector, scalarAlpha)
+  flightSmoothing.renderedGravityN += (flightSmoothing.targetGravityN - flightSmoothing.renderedGravityN) * scalarAlpha
+
+  flightSmoothing.targetThrusts.forEach((target, index) => {
+    const current = flightSmoothing.renderedThrusts[index] ?? 0
+    flightSmoothing.renderedThrusts[index] = current + (target - current) * scalarAlpha
+  })
+
+  vehicleGroup.position.copy(flightSmoothing.renderedPosition)
+  vehicleGroup.quaternion.copy(flightSmoothing.renderedQuaternion)
+
+  if (cgMarker) {
+    cgMarker.visible = true
+    cgMarker.position.copy(flightSmoothing.renderedCg)
+  }
+
+  flightSmoothing.renderedThrusts.forEach((thrust, index) => {
+    thrustArrows[index]?.setLength(0.16 + Math.min(1.0, thrust / 16), 0.095, 0.055)
+  })
+
+  gravityArrow?.setLength(0.30 + Math.min(0.68, flightSmoothing.renderedGravityN / 62), 0.10, 0.06)
+  gravityArrow?.setRotationFromQuaternion(vehicleGroup.quaternion.clone().invert())
+
+  const windSpeed = flightSmoothing.renderedWindVector.length()
+  const windDirection = windSpeed > 1e-6
+    ? flightSmoothing.renderedWindVector.clone().normalize()
+    : new THREE.Vector3(-1, 0, 0)
+  windArrow?.setDirection(windDirection)
+  windArrow?.setLength(0.42 + Math.min(1.5, windSpeed / 5), 0.14, 0.08)
 }
 
 function setPointer(event: PointerEvent): void {
@@ -422,16 +571,34 @@ function setCameraMode(mode: typeof cameraMode.value): void {
   cameraMode.value = mode
   controls.enableRotate = true
   controls.enablePan = mode === 'free'
-  if (mode !== 'free') updateManagedCamera(true)
+  if (mode !== 'free') updateManagedCamera(0.016, true)
   syncVisualTestProbe()
 }
 
+function fitAircraftToView(): void {
+  if (!camera || !controls || !aircraftRenderer || props.telemetry) return
+  const bounds = aircraftRenderer.aircraftBoundsSnapshot()
+  const span = Math.max(bounds.width, bounds.height, bounds.depth, 0.45)
+  const distance = Math.min(5.2, Math.max(1.55, span * 2.65))
+  const target = new THREE.Vector3(0, 0.03, 0)
+  controls.target.copy(target)
+  cameraTargetState.copy(target)
+  if (cameraMode.value === 'free') {
+    camera.position.set(distance * 0.72, distance * 0.48, distance * 0.88)
+  }
+  camera.updateProjectionMatrix()
+  controls.update()
+}
+
 function cameraTarget(): THREE.Vector3 {
+  if (props.telemetry && flightSmoothing.initialized) {
+    return flightSmoothing.renderedPosition.clone().add(new THREE.Vector3(0, 0.08, 0))
+  }
   return vehicleGroup?.position.clone().add(new THREE.Vector3(0, 0.08, 0))
     ?? new THREE.Vector3(0, 0.08, 0)
 }
 
-function updateManagedCamera(immediate = false): void {
+function updateManagedCamera(dt: number, immediate = false): void {
   if (cameraMode.value === 'free' || !camera || !controls) return
   const target = cameraTarget()
   let offset = new THREE.Vector3(2.2, 1.45, 2.7)
@@ -441,9 +608,12 @@ function updateManagedCamera(immediate = false): void {
   if (immediate) {
     camera.position.copy(desired)
     controls.target.copy(target)
+    cameraTargetState.copy(target)
   } else {
-    camera.position.lerp(desired, 0.07)
-    controls.target.lerp(target, 0.09)
+    const cameraAlpha = 1 - Math.exp(-dt * 4.2)
+    camera.position.lerp(desired, cameraAlpha)
+    cameraTargetState.lerp(target, 1 - Math.exp(-dt * 5.2))
+    controls.target.copy(cameraTargetState)
   }
 }
 
@@ -451,10 +621,12 @@ function animate(now = performance.now()): void {
   animationId = requestAnimationFrame(animate)
   const dt = Math.min(0.05, Math.max(0, (now - previousAnimationTime) / 1000))
   previousAnimationTime = now
+  advanceSmoothedFlight(dt)
+  const rotorInputs = props.telemetry ? flightSmoothing.renderedThrusts : undefined
   aircraftRenderer?.rotateRotors(
-    props.telemetry?.motors.outputs.map(output => output * Math.min(1.4, dt * 60)),
+    rotorInputs?.map(output => output * Math.min(1.35, dt * 60)),
   )
-  updateManagedCamera()
+  updateManagedCamera(dt)
   controls?.update()
   renderer?.render(scene, camera)
 }
@@ -475,6 +647,10 @@ const componentSignature = computed(() => {
     aircraft?.motor_id,
     aircraft?.esc_id,
     aircraft?.propeller_id,
+    aircraft?.propeller_directions?.M1,
+    aircraft?.propeller_directions?.M2,
+    aircraft?.propeller_directions?.M3,
+    aircraft?.propeller_directions?.M4,
     aircraft?.battery_id,
     aircraft?.power_module_id,
     aircraft?.flight_controller_id,
@@ -491,10 +667,11 @@ onMounted(async () => {
   camera = new THREE.PerspectiveCamera(44, 1, 0.03, 100)
   camera.position.set(2.4, 1.6, 3.0)
 
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
-  renderer.setPixelRatio(visualTestProbeEnabled ? 1 : Math.min(window.devicePixelRatio, 2))
+  await settingsStore.initialize()
+  renderer = new THREE.WebGLRenderer({ antialias: settingsStore.settings.display_3d.antialias, alpha: true })
+  renderer.setPixelRatio(displayPixelRatio())
   renderer.setClearColor(0x000000, 0)
-  renderer.shadowMap.enabled = true
+  renderer.shadowMap.enabled = settingsStore.settings.display_3d.shadows !== 'off'
   renderer.shadowMap.type = THREE.PCFSoftShadowMap
   renderer.outputColorSpace = THREE.SRGBColorSpace
   renderer.toneMapping = THREE.ACESFilmicToneMapping
@@ -506,32 +683,38 @@ onMounted(async () => {
   environmentTexture = pmrem.fromScene(environment, 0.04).texture
 
   buildWorld()
-  scene.environment = environmentTexture
+  scene.environment = settingsStore.settings.display_3d.environment_reflection ? environmentTexture : null
 
   controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = true
-  controls.dampingFactor = 0.08
+  controls.dampingFactor = 0.06
   controls.minDistance = 0.65
   controls.maxDistance = 12
   controls.target.set(0, 0.05, 0)
   renderer.domElement.addEventListener('pointerdown', onPointerDown)
   renderer.domElement.addEventListener('pointermove', onPointerMove)
 
+  setCameraMode(settingsStore.settings.display_3d.default_camera)
+  applyDisplaySettings()
   resize()
   window.addEventListener('resize', resize)
   syncVisualTestProbe()
   await rebuildAircraftAssets()
-  if (props.telemetry) updateFlightScene(props.telemetry)
+  if (props.telemetry) ingestTelemetryFrame(props.telemetry)
   applyAssemblyState()
   previousAnimationTime = performance.now()
   animate()
 })
 
 watch(componentSignature, () => { void rebuildAircraftAssets() })
-watch(() => props.telemetry, frame => { if (frame) updateFlightScene(frame) }, { deep: true })
+watch(() => settingsStore.settings.display_3d, () => { applyDisplaySettings() }, { deep: true })
+watch(() => props.telemetry, frame => { if (frame) ingestTelemetryFrame(frame) }, { deep: true })
 watch(
-  () => [props.selectedSlot, props.engineering, props.aircraft] as const,
-  applyAssemblyState,
+  () => [props.selectedSlot, props.issueSlots, props.issueMounts, props.engineering, props.aircraft] as const,
+  () => {
+    applyAssemblyState()
+    buildOverlay()
+  },
   { deep: true },
 )
 
@@ -557,17 +740,21 @@ onBeforeUnmount(() => {
 <style scoped>
 .asset-scene {
   background:
-    radial-gradient(circle at 50% 36%, rgba(255,255,255,.98) 0%, rgba(239,246,253,.96) 42%, rgba(225,235,246,.98) 100%);
+    radial-gradient(circle at 50% 26%, rgba(255,255,255,.98) 0%, rgba(237,244,255,.96) 38%, rgba(222,232,247,.98) 100%);
 }
 .asset-toolbar button.scene-chip {
   border: 0;
   background: transparent;
   cursor: pointer;
+  transition: background .18s ease, color .18s ease, transform .18s ease;
 }
 .asset-toolbar button.scene-chip:hover,
 .asset-toolbar button.scene-chip.active {
   color: #1f6feb;
   background: #edf5ff;
+}
+.asset-toolbar button.scene-chip:hover {
+  transform: translateY(-1px);
 }
 .asset-badge {
   position: absolute;
@@ -578,12 +765,13 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   padding: 6px 9px;
-  border-radius: 6px;
+  border-radius: 999px;
   border: 1px solid rgba(190,205,222,.9);
   background: rgba(255,255,255,.84);
   color: #526176;
   font-size: 10px;
   pointer-events: none;
+  box-shadow: 0 10px 25px rgba(9, 20, 42, 0.08);
 }
 .asset-badge span {
   width: 7px;
@@ -614,7 +802,7 @@ onBeforeUnmount(() => {
   gap: 6px;
   padding: 14px 16px;
   border: 1px solid #efc5c0;
-  border-radius: 8px;
+  border-radius: 12px;
   background: rgba(255, 247, 246, .96);
   color: #9f2f25;
   box-shadow: 0 12px 30px rgba(110, 38, 31, .12);
@@ -623,5 +811,8 @@ onBeforeUnmount(() => {
 .asset-error b {
   font-size: 13px;
 }
+.scene-selection.issue { border-color:#efb2ac; background:rgba(255,247,246,.94); }
+.scene-selection.issue b,.scene-selection.issue span { color:#9f2f25; }
+.legend-issue { background:#dc2626; }
 @keyframes assetPulse { 50% { opacity: .3; } }
 </style>

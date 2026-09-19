@@ -1,4 +1,5 @@
 import type { AssemblySlot } from '../utils/assembly'
+import type { MotorName, PropellerDirection } from './aircraft'
 
 export {}
 
@@ -28,11 +29,14 @@ export interface LoadedVisualAsset {
 }
 
 export interface UavVisualTestProbe {
-  version: '1.0'
+  version: '1.0' | '1.1'
   sceneReady: boolean
   pixelRatio: number
   cameraMode: 'follow' | 'top' | 'side' | 'free'
   selectedSlot: AssemblySlot | null
+  issueSlots: AssemblySlot[]
+  issueMounts: MotorName[]
+  propellerDirections: Record<MotorName, PropellerDirection> | null
   loadedAssets: LoadedVisualAsset[]
   aircraftBounds: VisualBounds
   partBounds: Partial<Record<AssemblySlot, VisualBounds>>

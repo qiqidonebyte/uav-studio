@@ -6,6 +6,10 @@ import type {
   AircraftDefinition,
   AssemblyState,
   Component,
+  FrameMountPoints,
+  MotorName,
+  RotorDirection,
+  Vector3Value,
 } from '../types/aircraft'
 import {
   installedComponentId,
@@ -21,6 +25,21 @@ function errorMessage(error: unknown): string {
     if (typeof detail === 'string') return detail
   }
   return '无法连接本地服务，请确认后端已启动。'
+}
+
+function vectorFromUnknown(value: unknown): Vector3Value | null {
+  if (!value || typeof value !== 'object') return null
+  const item = value as Record<string, unknown>
+  if (typeof item.x !== 'number' || typeof item.y !== 'number' || typeof item.z !== 'number') {
+    return null
+  }
+  return { x: item.x, y: item.y, z: item.z }
+}
+
+function frameMounts(component: Component | null): FrameMountPoints | null {
+  const raw = component?.parameters_json.mount_points
+  if (!raw || typeof raw !== 'object') return null
+  return raw as unknown as FrameMountPoints
 }
 
 export const useAssemblyStore = defineStore('assembly', () => {
@@ -42,6 +61,11 @@ export const useAssemblyStore = defineStore('assembly', () => {
       },
   )
   const aircraftName = computed(() => aircraft.value?.name ?? '正在载入')
+
+  async function refreshComponents(): Promise<void> {
+    const response = await api.get<Component[]>('/components')
+    components.value = response.data
+  }
 
   async function initialize(): Promise<void> {
     if (assemblyState.value || loading.value) return
@@ -73,13 +97,24 @@ export const useAssemblyStore = defineStore('assembly', () => {
       ...assemblyState.value.aircraft,
       [SLOT_FIELDS[slot]]: component.id,
     }
+
+    const frame = components.value.find(item => item.id === nextAircraft.frame_id) ?? null
+    const mounts = frameMounts(frame)
+
     if (slot === 'payload') {
       const mount = component.parameters_json.mount
-      nextAircraft.payload_position_m =
+      const key = mount === 'front' ? 'payload_front' : 'payload_bottom'
+      nextAircraft.payload_position_m = vectorFromUnknown(mounts?.[key]) ?? (
         mount === 'front'
           ? { x: 0.18, y: 0, z: -0.02 }
           : { x: 0.08, y: 0, z: -0.12 }
+      )
     }
+    if (slot === 'gnss') {
+      nextAircraft.gnss_position_m = vectorFromUnknown(mounts?.gnss)
+        ?? { x: -0.16, y: 0, z: 0.08 }
+    }
+
     await saveAircraft(nextAircraft)
     selectedSlot.value = slot
   }
@@ -94,6 +129,25 @@ export const useAssemblyStore = defineStore('assembly', () => {
     if (slot === 'gnss') nextAircraft.gnss_position_m = null
     await saveAircraft(nextAircraft)
     selectedSlot.value = slot
+  }
+
+  async function setPropellerDirection(
+    motor: MotorName,
+    direction: RotorDirection,
+  ): Promise<void> {
+    if (!assemblyState.value) return
+    const nextAircraft: AircraftDefinition = {
+      ...assemblyState.value.aircraft,
+      propeller_directions: {
+        M1: assemblyState.value.aircraft.propeller_directions?.M1 ?? 'CCW',
+        M2: assemblyState.value.aircraft.propeller_directions?.M2 ?? 'CW',
+        M3: assemblyState.value.aircraft.propeller_directions?.M3 ?? 'CCW',
+        M4: assemblyState.value.aircraft.propeller_directions?.M4 ?? 'CW',
+        [motor]: direction,
+      },
+    }
+    await saveAircraft(nextAircraft)
+    selectedSlot.value = 'propeller'
   }
 
   async function saveAircraft(nextAircraft: AircraftDefinition): Promise<void> {
@@ -152,8 +206,10 @@ export const useAssemblyStore = defineStore('assembly', () => {
     saving,
     error,
     initialize,
+    refreshComponents,
     installComponent,
     removeComponent,
+    setPropellerDirection,
     refreshCalculation,
     componentForSlot,
     selectSlot,

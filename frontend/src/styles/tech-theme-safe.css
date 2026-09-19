@@ -1,0 +1,570 @@
+/*
+ * UAV Studio safe tech theme
+ *
+ * Important:
+ * - This file is loaded AFTER workbench.css.
+ * - It restores the frozen V1 layout metrics first.
+ * - The technology theme changes colors/elevation only.
+ * - Do not change font sizes, panel widths, row heights or image crop rules here
+ *   unless the UI acceptance spec is updated first.
+ */
+
+/* --------------------------------------------------------------------------
+   1. Frozen layout / typography guard
+   These values intentionally match the original V1 workbench.
+   -------------------------------------------------------------------------- */
+
+html,
+body,
+#app {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.topbar {
+  height: 56px;
+  grid-template-columns: 260px 1fr auto;
+  padding: 0 18px;
+  gap: 16px;
+}
+
+.brand {
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.brand small {
+  font-size: 11px;
+  font-weight: 500;
+  margin-left: 6px;
+}
+
+.topbar nav {
+  gap: 24px;
+}
+
+.topbar nav a {
+  padding: 0 4px;
+  margin: 0;
+  border-radius: 0;
+  border-bottom-width: 3px;
+}
+
+.aircraft-chip,
+.status-pill {
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+.workbench-grid {
+  height: calc(100vh - 56px);
+  padding: 12px;
+  grid-template-columns: 276px minmax(0, 1fr) 320px;
+  grid-template-rows: minmax(460px, 1fr) 240px;
+  gap: 12px;
+}
+
+.assembly-grid {
+  grid-template-rows: minmax(0, 1fr) 112px;
+}
+
+.flight-grid {
+  grid-template-rows: minmax(0, 1fr) 210px;
+}
+
+.replay-grid {
+  grid-template-rows: minmax(0, 1fr) 210px;
+}
+
+.panel,
+.stage-panel,
+.bottom-panel {
+  border-radius: 8px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.panel-section,
+.inspector-section {
+  padding: 14px;
+}
+
+.panel-section h3,
+.inspector-section h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+.component-row {
+  min-height: 50px;
+  gap: 8px;
+  border-radius: 7px;
+  margin-bottom: 8px;
+  padding: 0 10px;
+}
+
+.component-name {
+  font-size: 13px;
+}
+
+.component-value {
+  font-size: 11px;
+}
+
+.component-chevron {
+  font-size: 20px;
+}
+
+.field-row {
+  grid-template-columns: 1fr 112px;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.field-row > div {
+  border-radius: 6px;
+}
+
+.field-row input,
+.field-row em {
+  padding: 8px;
+}
+
+.primary-action {
+  border-radius: 6px;
+  padding: 12px 10px;
+  margin: 8px 0;
+}
+
+.primary-action.compact {
+  margin: 0;
+  padding: 9px 10px;
+  font-size: 12px;
+}
+
+.ghost-action {
+  border-radius: 6px;
+  padding: 9px 12px;
+  font-size: 12px;
+}
+
+.button-grid {
+  gap: 8px;
+}
+
+.button-grid button {
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.scene-toolbar {
+  top: 12px;
+  left: 12px;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 7px;
+}
+
+.scene-chip {
+  padding: 6px 10px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+
+.scene-readout {
+  right: 12px;
+  bottom: 12px;
+  width: 205px;
+  padding: 9px 11px;
+  border-radius: 7px;
+  font-size: 11px;
+}
+
+.scene-readout div {
+  margin: 3px 0;
+}
+
+.wind-readout {
+  right: 54px;
+  top: 35%;
+  font-size: 14px;
+}
+
+.scene-selection {
+  left: 14px;
+  bottom: 14px;
+  min-width: 230px;
+  padding: 9px 11px;
+  border-radius: 7px;
+}
+
+.scene-selection b {
+  font-size: 12px;
+}
+
+.scene-selection span {
+  margin-top: 3px;
+  font-size: 10px;
+}
+
+.inspector-section dl > div {
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+.motor-section table,
+.motor-section th,
+.motor-section td {
+  font-size: 11px;
+}
+
+.charts-panel {
+  grid-template-rows: 38px 1fr;
+}
+
+.chart-tabs {
+  padding: 0 10px;
+}
+
+.chart-tab {
+  padding: 0 12px;
+  font-size: 11px;
+}
+
+.chart-live {
+  font-size: 10px;
+}
+
+.charts-grid {
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 8px;
+  padding: 8px;
+}
+
+.chart-box {
+  min-width: 190px;
+  min-height: 175px;
+  border-radius: 6px;
+}
+
+.simple-page,
+.history-page {
+  height: calc(100vh - 56px);
+  padding: 24px;
+}
+
+.history-head {
+  margin-bottom: 18px;
+}
+
+.history-table {
+  border-radius: 8px;
+}
+
+.history-row {
+  grid-template-columns: 1.3fr 1.1fr .8fr .9fr .7fr .8fr .8fr;
+  gap: 10px;
+  padding: 12px 14px;
+  font-size: 12px;
+}
+
+.history-empty,
+.record-error {
+  font-size: 12px;
+}
+
+.scene-legend {
+  left: 14px;
+  bottom: 14px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-size: 10px;
+}
+
+.assembly-step {
+  grid-template-columns: 28px 1fr auto;
+  gap: 8px;
+  border-radius: 7px;
+  padding: 9px;
+  margin-bottom: 7px;
+}
+
+.step-index {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+}
+
+.assembly-step b {
+  font-size: 12px;
+}
+
+.assembly-step small {
+  margin-top: 3px;
+}
+
+.assembly-step em {
+  padding: 3px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+}
+
+.launch-link {
+  margin-top: 14px;
+  border-radius: 6px;
+  padding: 11px;
+}
+
+.assembly-hint {
+  padding: 18px;
+  font-size: 13px;
+}
+
+.view-switch {
+  top: 12px;
+  padding: 3px;
+  border-radius: 7px;
+}
+
+.view-switch button {
+  padding: 6px 12px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.map-title {
+  top: 14px;
+  left: 14px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.map-readout {
+  right: 14px;
+  bottom: 14px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.secondary-action {
+  border-radius: 6px;
+  padding: 9px;
+  margin-bottom: 9px;
+}
+
+/* Restore rules that existed in the V1 workbench and were accidentally
+   dropped by the previous visual-only theme replacement. */
+
+.assembly-step em.error { background:#fff1f0; color:#b42318; }
+.component-picker { min-height: 230px; }
+.step-description { margin:-6px 0 12px; color:#748197; font-size:11px; }
+.slot-picker { padding:11px; margin-bottom:10px; border:1px solid #e0e6ef; border-radius:7px; background:#fbfcfe; }
+.slot-picker.selected { border-color:#79aaf3; background:#f5f9ff; }
+.slot-picker-head { display:grid; grid-template-columns:auto 1fr; gap:8px; align-items:center; margin-bottom:8px; }
+.slot-picker-head b { color:#24364e; font-size:12px; }
+.slot-picker-head span { justify-self:end; max-width:145px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }
+.slot-picker-head .installed { color:#137445; }
+.slot-picker-head .empty { color:#8591a3; }
+.slot-picker select { width:100%; min-width:0; border:1px solid #d9e1eb; border-radius:6px; background:#fff; padding:8px; color:#33445b; font-size:11px; }
+.slot-actions { display:grid; grid-template-columns:1fr auto; gap:7px; margin-top:8px; }
+.check-summary { display:grid; gap:4px; padding:12px; margin-bottom:10px; border:1px solid #dce4ee; border-radius:7px; background:#f8fafc; }
+.check-summary b { font-size:13px; }
+.check-summary span { font-size:11px; color:#6b788b; }
+.check-summary.passed { border-color:#ccefdc; background:#f1fbf6; color:#137445; }
+.check-summary.failed { border-color:#f2c6c1; background:#fff7f6; color:#b42318; }
+.inline-error { padding:8px; border-radius:6px; background:#fff1f0; color:#b42318; font-size:11px; }
+.assembly-stage { position:relative; }
+.stage-titlebar { position:absolute; z-index:4; top:12px; right:12px; display:flex; align-items:center; justify-content:space-between; gap:20px; min-width:280px; padding:8px 10px; border:1px solid #d8e1ed; border-radius:7px; background:rgba(255,255,255,.9); }
+.stage-titlebar b { display:block; color:#203047; font-size:12px; }
+.stage-titlebar span { color:#748197; font-size:10px; }
+.stage-live-state { display:flex; align-items:center; gap:6px; color:#506078; font-weight:700; }
+.ok-dot,.pending-dot { display:inline-block; width:8px; height:8px; border-radius:50%; }
+.ok-dot { background:#19a763; }.pending-dot { background:#d68a00; }
+.stage-loading { position:absolute; z-index:5; inset:0; display:grid; place-items:center; background:rgba(241,246,252,.88); color:#526176; font-size:13px; }
+.stage-loading.error { color:#b42318; }
+.inspector-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:10px; }
+.inspector-heading h3 { margin:0; }
+.inspector-heading p { margin:3px 0 0; color:#7b8799; font-size:10px; }
+.component-state,.check-badge { border-radius:10px; padding:3px 7px; font-size:10px; font-weight:700; }
+.component-state,.check-badge.ok { color:#137445; background:#eaf9f1; }
+.check-badge.error { color:#b42318; background:#fff1f0; }
+.empty-inspector { display:grid; gap:4px; padding:12px; border:1px dashed #d8e1ed; border-radius:7px; background:#fafcff; color:#718096; font-size:11px; }
+.empty-inspector b { color:#34445a; font-size:12px; }
+.empty-inspector.compact { padding:10px; }
+.component-properties dd { max-width:190px; text-align:right; overflow-wrap:anywhere; }
+.validation-item { display:grid; grid-template-columns:auto 1fr; gap:7px; align-items:start; padding:8px 9px; margin-bottom:7px; border-radius:6px; font-size:11px; }
+.validation-item b { white-space:nowrap; }
+.validation-item.error { border:1px solid #f2c6c1; background:#fff7f6; color:#9f2f25; }
+.validation-item.warning { border:1px solid #f3dfb5; background:#fffaf0; color:#9a5c00; }
+.launch-link.disabled { margin-top:14px; display:block; padding:11px; border-radius:6px; text-align:center; background:#eef1f5; color:#8490a0; font-weight:700; font-size:12px; }
+.assembly-bottom { display:grid; grid-template-columns:minmax(0,1fr) 280px; align-items:center; gap:18px; }
+.assembly-progress { padding-right:18px; }
+.assembly-progress > span { display:block; margin-bottom:7px; color:#526176; font-size:11px; }
+.progress-track { width:100%; height:7px; overflow:hidden; border-radius:7px; background:#e8edf4; }
+.progress-track i { display:block; height:100%; border-radius:7px; background:#2563eb; transition:width .2s ease; }
+.legend-green { background:#19a763; }
+.legend-gray { background:#aeb8c5; }
+.scene-legend-assembly { left:auto !important; right:14px; }
+.command-state { display:flex; justify-content:space-between; align-items:center; margin-top:9px; padding-top:9px; border-top:1px solid #edf1f5; color:#66758b; font-size:11px; }
+.command-state b { color:#22324a; }
+.warn-text { color:#b66a00 !important; }
+.command-error { color:#b42318; background:#fff7f6; font-size:12px; }
+.waypoint-hint { min-height:32px; margin:0 0 9px; color:#66758b; font-size:11px; line-height:1.5; }
+.waypoint-clear { width:100%; margin-top:8px; }
+.stage-blocker { position:absolute; z-index:6; inset:0; display:grid; place-content:center; justify-items:center; gap:8px; padding:30px; text-align:center; background:rgba(241,246,252,.91); }
+.stage-blocker b { color:#b42318; font-size:16px; }
+.stage-blocker span { color:#607087; font-size:12px; }
+.stage-blocker a { margin-top:5px; padding:9px 14px; border-radius:6px; background:#2563eb; color:#fff; text-decoration:none; font-size:12px; font-weight:700; }
+.chart-live .dot.paused { background:#94a3b8; }
+.replay-reset { margin-top:9px; }
+.replay-slider { display:grid; gap:7px; margin-top:8px; color:#66758b; font-size:11px; }
+.replay-slider input { width:100%; accent-color:#2563eb; }
+.replay-speed { margin-top:12px; }
+.replay-speed select { min-width:110px; border:1px solid #dfe6ef; border-radius:6px; padding:7px; background:#fff; }
+.replay-metadata { margin:0; }
+.replay-metadata > div { display:grid; grid-template-columns:1fr auto; gap:9px; padding:6px 0; border-bottom:1px solid #eef2f6; font-size:11px; }
+.replay-metadata dt { color:#66758b; }.replay-metadata dd { margin:0; text-align:right; color:#22324a; font-weight:700; }
+
+/* Image guard: card media must show the WHOLE asset, never crop it. */
+.component-card-media img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  object-position: center center;
+}
+
+/* --------------------------------------------------------------------------
+   2. Safe technology palette
+   Color/elevation changes only. No geometry changes below this line.
+   -------------------------------------------------------------------------- */
+
+:root {
+  --tech-navy-950: #08111f;
+  --tech-navy-900: #0d1b2a;
+  --tech-navy-800: #13263c;
+  --tech-blue: #2563eb;
+  --tech-cyan: #0891b2;
+  --tech-bg: #f3f7fc;
+  --tech-panel: #ffffff;
+  --tech-border: #dce6f2;
+  --tech-text: #18263a;
+  --tech-muted: #65758b;
+}
+
+body,
+.app-shell {
+  background:
+    radial-gradient(circle at 8% 0%, rgba(37, 99, 235, .06), transparent 30%),
+    linear-gradient(180deg, #f7f9fc 0%, var(--tech-bg) 100%);
+}
+
+.topbar {
+  background: linear-gradient(135deg, var(--tech-navy-950) 0%, var(--tech-navy-900) 52%, var(--tech-navy-800) 100%);
+  border-bottom-color: rgba(139, 170, 211, .20);
+  box-shadow: 0 8px 24px rgba(4, 13, 27, .16);
+}
+
+.topbar nav a {
+  color: rgba(225, 235, 249, .76);
+  border-bottom-color: transparent;
+}
+
+.topbar nav a:hover {
+  color: #ffffff;
+}
+
+.topbar nav a.router-link-active {
+  color: #ffffff;
+  border-bottom-color: #38bdf8;
+}
+
+.aircraft-chip,
+.status-pill {
+  background: rgba(255,255,255,.07);
+  border-color: rgba(151, 177, 211, .20);
+  color: #edf5ff;
+}
+
+.status-pill.info {
+  background: rgba(8, 145, 178, .12);
+  border-color: rgba(103, 232, 249, .20);
+  color: #cffafe;
+}
+
+.panel,
+.stage-panel,
+.bottom-panel,
+.history-table {
+  background: rgba(255,255,255,.96);
+  border-color: var(--tech-border);
+  box-shadow: 0 8px 24px rgba(17, 35, 62, .05);
+}
+
+.panel-section,
+.inspector-section,
+.chart-tabs {
+  border-bottom-color: #e9eef5;
+}
+
+.primary-action,
+.launch-link {
+  background: linear-gradient(135deg, #2563eb 0%, #2768d8 66%, #0891b2 100%);
+  color: #ffffff;
+}
+
+.primary-blue {
+  background: #2563eb !important;
+  border-color: #2563eb !important;
+}
+
+.scene-toolbar,
+.scene-readout,
+.scene-selection,
+.scene-legend,
+.view-switch,
+.map-title,
+.map-readout,
+.stage-titlebar {
+  border-color: rgba(205, 218, 234, .95);
+  box-shadow: 0 6px 18px rgba(18, 39, 69, .06);
+}
+
+.scene-chip-active,
+.view-switch button.active {
+  background: #eef5ff;
+  color: #1d5fd1;
+}
+
+.progress-track i {
+  background: linear-gradient(90deg, #2563eb, #0891b2);
+}
+
+.chart-tab.active {
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+}
+
+@media (max-width: 1280px) {
+  .workbench-grid {
+    grid-template-columns: 240px minmax(0, 1fr) 280px;
+  }
+
+  .topbar {
+    grid-template-columns: 220px 1fr auto;
+  }
+
+  .brand-mainline span {
+    display: none;
+  }
+}

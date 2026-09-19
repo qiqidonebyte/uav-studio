@@ -4,6 +4,7 @@ import type {
   Component,
   ComponentType,
   ComponentVisual,
+  MotorName,
   Vector3Value,
 } from '../types/aircraft'
 import type { AssemblySlot } from '../utils/assembly'
@@ -17,8 +18,6 @@ import {
   propellerOffsetY,
 } from './assetRegistry'
 import { loadModel } from './modelLoader'
-
-type MotorName = keyof typeof MOTOR_DIRECTIONS
 
 interface MaterialSnapshot {
   opacity: number
@@ -37,6 +36,7 @@ interface PartRecord {
   componentId: number | null
   url: string
   direction?: 'CW' | 'CCW'
+  motorName?: MotorName
 }
 
 export interface VisualBoundsSnapshot {
@@ -113,6 +113,7 @@ function applyMaterialState(
   mesh: THREE.Mesh,
   installed: boolean,
   selected: boolean,
+  issue: boolean,
 ): void {
   const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
   materials.forEach(material => {
@@ -130,9 +131,11 @@ function applyMaterialState(
       standard.color.setHex(installed ? (base.color ?? 0xffffff) : 0x9aa8b7)
     }
     if (standard.emissive) {
-      standard.emissive.setHex(selected ? 0x2563eb : (base.emissive ?? 0x000000))
-      standard.emissiveIntensity = selected
-        ? 0.75
+      standard.emissive.setHex(issue ? 0xb42318 : selected ? 0x2563eb : (base.emissive ?? 0x000000))
+      standard.emissiveIntensity = issue
+        ? 0.7
+        : selected
+          ? 0.75
         : (base.emissiveIntensity ?? 1)
     }
     material.needsUpdate = true
@@ -206,6 +209,7 @@ export class AircraftRenderer {
     componentId: number | null,
     url: string,
     direction?: 'CW' | 'CCW',
+    motorName?: MotorName,
   ): void {
     const meshes: THREE.Mesh[] = []
     object.traverse(child => {
@@ -222,6 +226,7 @@ export class AircraftRenderer {
       componentId,
       url,
       direction,
+      motorName,
     })
     this.root.add(object)
   }
@@ -290,7 +295,15 @@ export class AircraftRenderer {
 
       const motorObject = index === 0 ? motorPrototype : motorPrototype.clone(true)
       motorObject.position.copy(p)
-      this.register('motor', motorObject, Boolean(motor), motor?.id ?? null, motorUrl)
+      this.register(
+        'motor',
+        motorObject,
+        Boolean(motor),
+        motor?.id ?? null,
+        motorUrl,
+        undefined,
+        name,
+      )
 
       const escObject = index === 0 ? escPrototype : escPrototype.clone(true)
       escObject.position.copy(p.clone().multiplyScalar(0.64))
@@ -310,6 +323,7 @@ export class AircraftRenderer {
         propeller?.id ?? null,
         propUrl,
         direction,
+        name,
       )
       this.rotorGroups.push({ group: propObject, sign: direction === 'CW' ? -1 : 1 })
     })
@@ -389,11 +403,15 @@ export class AircraftRenderer {
   applyAssemblyState(
     aircraft: AircraftDefinition | null | undefined,
     selectedSlot: AssemblySlot | null,
+    issueSlots: AssemblySlot[] = [],
+    issueMounts: MotorName[] = [],
   ): void {
     this.parts.forEach(part => {
       const installed = aircraft ? isSlotInstalled(aircraft, part.slot) : part.installed
       const selected = selectedSlot === part.slot
-      part.meshes.forEach(mesh => applyMaterialState(mesh, installed, selected))
+      const issue = issueSlots.includes(part.slot)
+        || Boolean(part.motorName && issueMounts.includes(part.motorName))
+      part.meshes.forEach(mesh => applyMaterialState(mesh, installed, selected, issue))
       part.object.visible = true
     })
   }

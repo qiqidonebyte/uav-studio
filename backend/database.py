@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -29,3 +29,26 @@ def build_engine(database_url: str = DEFAULT_DATABASE_URL) -> Engine:
 
 def build_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+
+def ensure_schema_compatibility(engine: Engine) -> None:
+    """Apply additive SQLite migrations needed by existing local databases."""
+
+    if engine.dialect.name != "sqlite":
+        return
+
+    inspector = inspect(engine)
+    if "aircraft" not in inspector.get_table_names():
+        return
+
+    aircraft_columns = {
+        column["name"] for column in inspector.get_columns("aircraft")
+    }
+    if "propeller_directions_json" not in aircraft_columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "ALTER TABLE aircraft "
+                    "ADD COLUMN propeller_directions_json JSON"
+                )
+            )

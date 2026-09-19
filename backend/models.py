@@ -8,6 +8,16 @@ class Base(DeclarativeBase):
     pass
 
 
+class UserRecord(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    settings_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+
+
 class ComponentRecord(Base):
     __tablename__ = "components"
 
@@ -27,6 +37,7 @@ class AircraftRecord(Base):
     motor_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     esc_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     propeller_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    propeller_directions_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     battery_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     power_module_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     flight_controller_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

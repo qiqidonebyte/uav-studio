@@ -24,19 +24,18 @@ from backend.database import (
     DEFAULT_SIMULATIONS_DIR,
     build_engine,
     build_session_factory,
+    ensure_schema_compatibility,
 )
 from backend.engineering import (
     EngineeringInputError,
     calculate_aircraft_engineering,
     validate_configuration,
 )
-from backend.models import AircraftRecord, Base, ComponentRecord
-from backend.models import SimulationRecord
-from backend.experiments import (
-    list_experiments,
-    load_replay,
-    save_experiment,
-)
+from backend.experiments import list_experiments, load_replay, save_experiment
+from backend.component_library import register_component_library_routes
+from backend.user_settings import ensure_admin_user, register_user_settings_routes
+from backend.models import AircraftRecord, Base, ComponentRecord, SimulationRecord
+from backend.p0_validation import augment_validation
 from backend.schemas import (
     AircraftDefinition,
     AssemblyState,
@@ -44,6 +43,7 @@ from backend.schemas import (
     ComponentType,
     ExperimentReplay,
     ExperimentSummary,
+    PropellerMountDirections,
     SimulationCreateRequest,
     SimulationSnapshot,
     TargetCommand,
@@ -53,10 +53,7 @@ from backend.schemas import (
     WindCommand,
 )
 from backend.seed import seed_database
-from backend.simulation_manager import (
-    SimulationManager,
-    SimulationNotFoundError,
-)
+from backend.simulation_manager import SimulationManager, SimulationNotFoundError
 
 
 def _component_from_record(record: ComponentRecord) -> Component:
@@ -77,6 +74,11 @@ def _aircraft_from_record(record: AircraftRecord) -> AircraftDefinition:
         motor_id=record.motor_id,
         esc_id=record.esc_id,
         propeller_id=record.propeller_id,
+        propeller_directions=(
+            PropellerMountDirections.model_validate(record.propeller_directions_json)
+            if record.propeller_directions_json is not None
+            else PropellerMountDirections()
+        ),
         battery_id=record.battery_id,
         power_module_id=record.power_module_id,
         flight_controller_id=record.flight_controller_id,
@@ -107,11 +109,14 @@ def _assembly_state(
     session: Session,
 ) -> AssemblyState:
     catalog = _catalog(session)
-    validation = validate_configuration(aircraft, catalog)
+    base_validation = validate_configuration(aircraft, catalog)
+    validation = augment_validation(aircraft, base_validation)
     try:
         engineering = calculate_aircraft_engineering(aircraft, catalog)
     except EngineeringInputError:
         engineering = None
+    else:
+        engineering = engineering.model_copy(update={"validation": validation})
     return AssemblyState(
         aircraft=aircraft,
         engineering=engineering,
@@ -128,6 +133,7 @@ def _update_aircraft_record(
     record.motor_id = aircraft.motor_id
     record.esc_id = aircraft.esc_id
     record.propeller_id = aircraft.propeller_id
+    record.propeller_directions_json = aircraft.propeller_directions.model_dump()
     record.battery_id = aircraft.battery_id
     record.power_module_id = aircraft.power_module_id
     record.flight_controller_id = aircraft.flight_controller_id
@@ -157,8 +163,10 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         Base.metadata.create_all(engine)
+        ensure_schema_compatibility(engine)
         with session_factory() as session:
             seed_database(session)
+            ensure_admin_user(session)
             next_simulation_id = (
                 session.scalar(select(func.max(SimulationRecord.id))) or 0
             ) + 1
@@ -176,7 +184,12 @@ def create_app(
     app.state.simulation_manager = simulation_manager
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -185,6 +198,9 @@ def create_app(
     def get_db(request: Request) -> Iterator[Session]:
         with request.app.state.session_factory() as session:
             yield session
+
+    register_user_settings_routes(app, get_db)
+    register_component_library_routes(app, get_db)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -297,13 +313,18 @@ def create_app(
             )
         aircraft = _aircraft_from_record(record)
         catalog = _catalog(session)
-        validation = validate_configuration(aircraft, catalog)
+        validation = augment_validation(
+            aircraft,
+            validate_configuration(aircraft, catalog),
+        )
         if not validation.passed:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="装配检查未通过，不能创建飞行仿真",
             )
-        engineering = calculate_aircraft_engineering(aircraft, catalog)
+        engineering = calculate_aircraft_engineering(aircraft, catalog).model_copy(
+            update={"validation": validation}
+        )
         simulation = simulation_manager.create(
             aircraft,
             catalog,

@@ -7,9 +7,10 @@
     :data-component-type="component.type"
     @click="emit('choose')"
   >
-    <div class="component-card-media">
+    <div class="component-card-media" data-testid="component-media">
       <img
         v-if="thumbnail"
+        data-testid="component-thumbnail"
         :src="thumbnail"
         :alt="`${component.name} 缩略图`"
         loading="lazy"
@@ -107,18 +108,24 @@ const thumbnail = computed(() => {
 }
 .component-card-media {
   position: relative;
-  height: 92px;
-  display: grid;
-  place-items: center;
+  height: 136px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
+  padding: 8px;
   background: linear-gradient(180deg, #f7faff 0%, #edf3f9 100%);
   border-bottom: 1px solid #edf1f5;
 }
 .component-card-media img {
-  width: 100%;
-  height: 100%;
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
   object-fit: contain;
-  padding: 6px;
+  object-position: center center;
+  transform: none;
 }
 .component-card-missing {
   color: #b42318;
