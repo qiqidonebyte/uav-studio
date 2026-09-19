@@ -1,0 +1,101 @@
+{
+  "assetVersion": "1.1.0",
+  "units": "meter",
+  "axes": {
+    "x": "+X forward",
+    "y": "+Y up",
+    "z": "+Z right"
+  },
+  "scope": "教学用中等精度通用模型；不对应任何厂商精确CAD。所有缩略图均由本包GLB几何直接渲染。",
+  "componentMap": {
+    "1": {
+      "type": "frame",
+      "file": "frame_650.glb",
+      "thumbnail": "thumbnails/frame_650.png"
+    },
+    "2": {
+      "type": "frame",
+      "file": "frame_450.glb",
+      "thumbnail": "thumbnails/frame_450.png"
+    },
+    "10": {
+      "type": "motor",
+      "file": "motor_5010_360kv.glb",
+      "thumbnail": "thumbnails/motor_5010.png"
+    },
+    "11": {
+      "type": "motor",
+      "file": "motor_4008_500kv.glb",
+      "thumbnail": "thumbnails/motor_4008.png"
+    },
+    "20": {
+      "type": "esc",
+      "file": "esc_30a.glb",
+      "thumbnail": "thumbnails/esc_30a.png"
+    },
+    "21": {
+      "type": "esc",
+      "file": "esc_40a.glb",
+      "thumbnail": "thumbnails/esc_40a.png"
+    },
+    "30": {
+      "type": "propeller",
+      "cw": "prop_15_cw.glb",
+      "ccw": "prop_15_ccw.glb",
+      "thumbnail": "thumbnails/prop_15.png"
+    },
+    "31": {
+      "type": "propeller",
+      "cw": "prop_14_cw.glb",
+      "ccw": "prop_14_ccw.glb",
+      "thumbnail": "thumbnails/prop_14.png"
+    },
+    "40": {
+      "type": "battery",
+      "file": "battery_6s_10000.glb",
+      "thumbnail": "thumbnails/battery_10000.png"
+    },
+    "41": {
+      "type": "battery",
+      "file": "battery_6s_16000.glb",
+      "thumbnail": "thumbnails/battery_16000.png"
+    },
+    "50": {
+      "type": "power_module",
+      "file": "power_120a.glb",
+      "thumbnail": "thumbnails/power_120.png"
+    },
+    "51": {
+      "type": "power_module",
+      "file": "power_160a.glb",
+      "thumbnail": "thumbnails/power_160.png"
+    },
+    "60": {
+      "type": "flight_controller",
+      "file": "fc_v1.glb",
+      "thumbnail": "thumbnails/fc_v1.png"
+    },
+    "61": {
+      "type": "flight_controller",
+      "file": "fc_v2.glb",
+      "thumbnail": "thumbnails/fc_v2.png"
+    },
+    "70": {
+      "type": "gnss",
+      "file": "gnss_m8n.glb",
+      "thumbnail": "thumbnails/gnss_m8n.png"
+    },
+    "80": {
+      "type": "payload",
+      "file": "payload_camera_300g.glb",
+      "thumbnail": "thumbnails/payload_camera.png"
+    }
+  },
+  "motorDirection": {
+    "M1": "CCW",
+    "M2": "CW",
+    "M3": "CCW",
+    "M4": "CW"
+  },
+  "referenceComplete": "eduquad650_reference.glb"
+}
