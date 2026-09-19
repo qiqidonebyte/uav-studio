@@ -28,8 +28,29 @@ export interface LoadedVisualAsset {
   direction?: 'CW' | 'CCW'
 }
 
+export interface ExplodedVisualPart {
+  slot: AssemblySlot
+  componentId: number | null
+  motorName?: MotorName
+  installed: boolean
+  basePosition: VisualVector3
+  currentPosition: VisualVector3
+  offset: VisualVector3
+}
+
+export interface ExplodedVisualLabel {
+  key: string
+  slot: AssemblySlot
+  title: string
+  meta: string
+  left: number
+  top: number
+  selected: boolean
+  issue: boolean
+}
+
 export interface UavVisualTestProbe {
-  version: '1.0' | '1.1'
+  version: '1.0' | '1.1' | '1.2'
   sceneReady: boolean
   pixelRatio: number
   cameraMode: 'follow' | 'top' | 'side' | 'free'
@@ -46,4 +67,9 @@ export interface UavVisualTestProbe {
     M3: VisualVector3
     M4: VisualVector3
   }
+  assemblyViewMode: 'assembled' | 'exploded'
+  explosionProgress: number
+  directionLabelsVisible: boolean
+  explodedParts: ExplodedVisualPart[]
+  explodedLabels: ExplodedVisualLabel[]
 }

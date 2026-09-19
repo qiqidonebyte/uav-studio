@@ -1,0 +1,12 @@
+{
+  "repository": "qiqidonebyte/uav-studio",
+  "branch": "main",
+  "head": "df88d9e3e4cb02138cbda1cbf631c7fdc2bad4d2",
+  "verified_base_blobs": {
+    "frontend/src/components/DroneScene.vue": "887dc0ec14049f18cdd84e9ad22606a73a64fc1d",
+    "frontend/src/three/AircraftRenderer.ts": "063bf3443a3d86da985e9feb848cdf75a209901b",
+    "frontend/src/types/visual-test.d.ts": "c3295155df19c3da869bea2f1064191c99ada922",
+    "frontend/tests/p0-scene-contract.mjs": "720e0f448cae75de269360ef14da43acac507edb",
+    "frontend/tests/p0-visual-capture.mjs": "3703c3d1b7fc888f32b1b930b5ceacc142463b8e"
+  }
+}

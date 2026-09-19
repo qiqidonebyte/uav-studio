@@ -1,12 +1,25 @@
 {
   "assetVersion": "1.1.0",
+  "visualEdition": "EduQuad-650 Realistic Edition 2.0",
   "units": "meter",
   "axes": {
     "x": "+X forward",
     "y": "+Y up",
     "z": "+Z right"
   },
-  "scope": "教学用中等精度通用模型；不对应任何厂商精确CAD。所有缩略图均由本包GLB几何直接渲染。",
+  "scope": "教学级工程数字样机。几何、材质和结构用于教学可视化，不代表任何厂商制造级CAD。",
+  "materialSystem": "glTF 2.0 PBR metallic-roughness",
+  "features": [
+    "carbon frame plates and round arms",
+    "machined/anodized mounts and fasteners",
+    "outrunner motors with visible copper windings and phase wires",
+    "ESC MOSFET/heatsink/capacitor/lead details",
+    "twisted swept propeller blades with CW/CCW variants",
+    "LiPo pack straps, balance connector, power leads and XT90",
+    "flight-controller ICs, ports, headers and vibration dampers",
+    "GNSS ceramic antenna and cable",
+    "3-axis gimbal camera with lens train"
+  ],
   "componentMap": {
     "1": {
       "type": "frame",
@@ -97,5 +110,83 @@
     "M3": "CCW",
     "M4": "CW"
   },
-  "referenceComplete": "eduquad650_reference.glb"
+  "referenceComplete": "eduquad650_reference.glb",
+  "metrics": {
+    "frame_650.glb": {
+      "bytes": 93008,
+      "triangles": 6092
+    },
+    "frame_450.glb": {
+      "bytes": 79272,
+      "triangles": 4876
+    },
+    "motor_5010_360kv.glb": {
+      "bytes": 105620,
+      "triangles": 7672
+    },
+    "motor_4008_500kv.glb": {
+      "bytes": 105840,
+      "triangles": 7672
+    },
+    "esc_30a.glb": {
+      "bytes": 33268,
+      "triangles": 1296
+    },
+    "esc_40a.glb": {
+      "bytes": 33288,
+      "triangles": 1296
+    },
+    "prop_15_cw.glb": {
+      "bytes": 31212,
+      "triangles": 1504
+    },
+    "prop_15_ccw.glb": {
+      "bytes": 31212,
+      "triangles": 1504
+    },
+    "prop_14_cw.glb": {
+      "bytes": 31212,
+      "triangles": 1504
+    },
+    "prop_14_ccw.glb": {
+      "bytes": 31212,
+      "triangles": 1504
+    },
+    "battery_6s_10000.glb": {
+      "bytes": 26388,
+      "triangles": 852
+    },
+    "battery_6s_16000.glb": {
+      "bytes": 26396,
+      "triangles": 852
+    },
+    "power_120a.glb": {
+      "bytes": 16076,
+      "triangles": 424
+    },
+    "power_160a.glb": {
+      "bytes": 16112,
+      "triangles": 424
+    },
+    "fc_v1.glb": {
+      "bytes": 24744,
+      "triangles": 1152
+    },
+    "fc_v2.glb": {
+      "bytes": 24744,
+      "triangles": 1152
+    },
+    "gnss_m8n.glb": {
+      "bytes": 19456,
+      "triangles": 872
+    },
+    "payload_camera_300g.glb": {
+      "bytes": 53828,
+      "triangles": 2664
+    },
+    "eduquad650_reference.glb": {
+      "bytes": 707296,
+      "triangles": 54056
+    }
+  }
 }

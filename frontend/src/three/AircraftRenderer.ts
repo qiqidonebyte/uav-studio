@@ -18,6 +18,11 @@ import {
   propellerOffsetY,
 } from './assetRegistry'
 import { loadModel } from './modelLoader'
+import {
+  explodedPosition,
+  explosionOffsetForPart,
+  type PlainVector3,
+} from './explodedView'
 
 interface MaterialSnapshot {
   opacity: number
@@ -37,6 +42,8 @@ interface PartRecord {
   url: string
   direction?: 'CW' | 'CCW'
   motorName?: MotorName
+  basePosition: THREE.Vector3
+  explosionOffset: THREE.Vector3
 }
 
 export interface VisualBoundsSnapshot {
@@ -50,6 +57,16 @@ export interface LoadedAssetSnapshot {
   componentId: number | null
   url: string
   direction?: 'CW' | 'CCW'
+}
+
+export interface ExplodedPartSnapshot {
+  slot: AssemblySlot
+  componentId: number | null
+  motorName?: MotorName
+  installed: boolean
+  basePosition: PlainVector3
+  currentPosition: PlainVector3
+  offset: PlainVector3
 }
 
 const SLOT_FIELD: Record<AssemblySlot, keyof AircraftDefinition> = {
@@ -131,12 +148,14 @@ function applyMaterialState(
       standard.color.setHex(installed ? (base.color ?? 0xffffff) : 0x9aa8b7)
     }
     if (standard.emissive) {
-      standard.emissive.setHex(issue ? 0xb42318 : selected ? 0x2563eb : (base.emissive ?? 0x000000))
+      standard.emissive.setHex(
+        issue ? 0xb42318 : selected ? 0x2563eb : (base.emissive ?? 0x000000),
+      )
       standard.emissiveIntensity = issue
         ? 0.7
         : selected
           ? 0.75
-        : (base.emissiveIntensity ?? 1)
+          : (base.emissiveIntensity ?? 1)
     }
     material.needsUpdate = true
   })
@@ -173,11 +192,16 @@ function simulationMotorMounts(diagonal: number): Record<MotorName, Vector3Value
   }
 }
 
+function vectorSnapshot(value: THREE.Vector3): PlainVector3 {
+  return { x: value.x, y: value.y, z: value.z }
+}
+
 export class AircraftRenderer {
   readonly root = new THREE.Group()
   private parts: PartRecord[] = []
   private rotorGroups: Array<{ group: THREE.Object3D; sign: number }> = []
   private generation = 0
+  private explodedProgress = 0
   private lastMotorMounts: Record<MotorName, Vector3Value> = simulationMotorMounts(0.65)
 
   constructor() {
@@ -197,9 +221,20 @@ export class AircraftRenderer {
   }
 
   private async loadRequired(url: string): Promise<THREE.Group> {
-    // P0 rule: installed assets fail loudly. Missing GLBs must not silently turn
-    // back into BoxGeometry/CylinderGeometry placeholders.
     return loadModel(url)
+  }
+
+  private explosionOffset(
+    slot: AssemblySlot,
+    object: THREE.Object3D,
+    motorName?: MotorName,
+  ): THREE.Vector3 {
+    const offset = explosionOffsetForPart({
+      slot,
+      basePosition: vectorSnapshot(object.position),
+      ...(motorName ? { motorName } : {}),
+    })
+    return new THREE.Vector3(offset.x, offset.y, offset.z)
   }
 
   private register(
@@ -218,6 +253,9 @@ export class AircraftRenderer {
       mesh.userData.slot = slot
       meshes.push(mesh)
     })
+
+    const basePosition = object.position.clone()
+    const explosionOffset = this.explosionOffset(slot, object, motorName)
     this.parts.push({
       slot,
       object,
@@ -227,6 +265,8 @@ export class AircraftRenderer {
       url,
       direction,
       motorName,
+      basePosition,
+      explosionOffset,
     })
     this.root.add(object)
   }
@@ -244,6 +284,7 @@ export class AircraftRenderer {
     const oldPosition = this.root.position.clone()
     const oldRotation = this.root.rotation.clone()
     const oldScale = this.root.scale.clone()
+    const explodedProgress = this.explodedProgress
     this.clearParts()
 
     const frame = componentForSlot(aircraft, components, 'frame')
@@ -309,9 +350,18 @@ export class AircraftRenderer {
       escObject.position.copy(p.clone().multiplyScalar(0.64))
       escObject.position.y = mountY * 0.58
       escObject.rotation.y = Math.atan2(-p.z, p.x)
-      this.register('esc', escObject, Boolean(esc), esc?.id ?? null, escUrl)
+      this.register(
+        'esc',
+        escObject,
+        Boolean(esc),
+        esc?.id ?? null,
+        escUrl,
+        undefined,
+        name,
+      )
 
-      const direction = MOTOR_DIRECTIONS[name]
+      const direction =
+        aircraft?.propeller_directions?.[name] ?? MOTOR_DIRECTIONS[name]
       const source = direction === 'CW' ? propPrototypeCW : propPrototypeCCW
       const propObject = source.clone(true)
       propObject.position.copy(p).add(new THREE.Vector3(0, propellerOffsetY(motor), 0))
@@ -378,25 +428,27 @@ export class AircraftRenderer {
         gnssPosition.z,
       )
       mast.castShadow = true
-      // Mast is an engineering overlay/accessory, not a component asset. It is
-      // intentionally excluded from loadedAssets by using the GNSS URL only for
-      // the actual GNSS component above.
       mast.userData.slot = 'gnss'
+      const basePosition = mast.position.clone()
+      const explosionOffset = this.explosionOffset('gnss', mast)
       this.root.add(mast)
-      const mastMeshes = [mast]
       this.parts.push({
         slot: 'gnss',
         object: mast,
-        meshes: mastMeshes,
+        meshes: [mast],
         installed: Boolean(gnss),
         componentId: null,
         url: 'procedural:gnss-mast',
+        basePosition,
+        explosionOffset,
       })
     }
 
     this.root.position.copy(oldPosition)
     this.root.rotation.copy(oldRotation)
     this.root.scale.copy(oldScale)
+    this.explodedProgress = explodedProgress
+    this.setExplodedProgress(explodedProgress)
     this.applyAssemblyState(aircraft, null)
   }
 
@@ -414,6 +466,37 @@ export class AircraftRenderer {
       part.meshes.forEach(mesh => applyMaterialState(mesh, installed, selected, issue))
       part.object.visible = true
     })
+  }
+
+  setExplodedProgress(progress: number): void {
+    this.explodedProgress = Math.max(0, Math.min(1, progress))
+    this.parts.forEach(part => {
+      const next = explodedPosition(
+        vectorSnapshot(part.basePosition),
+        vectorSnapshot(part.explosionOffset),
+        this.explodedProgress,
+      )
+      part.object.position.set(next.x, next.y, next.z)
+    })
+    this.root.updateMatrixWorld(true)
+  }
+
+  explodedProgressSnapshot(): number {
+    return this.explodedProgress
+  }
+
+  explodedPartsSnapshot(): ExplodedPartSnapshot[] {
+    return this.parts
+      .filter(part => !part.url.startsWith('procedural:'))
+      .map(part => ({
+        slot: part.slot,
+        componentId: part.componentId,
+        ...(part.motorName ? { motorName: part.motorName } : {}),
+        installed: part.installed,
+        basePosition: vectorSnapshot(part.basePosition),
+        currentPosition: vectorSnapshot(part.object.position),
+        offset: vectorSnapshot(part.explosionOffset),
+      }))
   }
 
   rotateRotors(outputs: number[] | undefined): void {

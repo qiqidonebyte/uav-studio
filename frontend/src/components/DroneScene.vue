@@ -1,16 +1,34 @@
 <template>
   <div ref="host" class="drone-scene asset-scene" :style="{ cursor }" @pointerleave="cursor = 'default'">
     <div class="scene-toolbar asset-toolbar">
-      <span class="scene-chip scene-chip-active">三维视图</span>
-      <button :class="['scene-chip', { active: cameraMode === 'follow' }]" @click="setCameraMode('follow')">跟随</button>
-      <button :class="['scene-chip', { active: cameraMode === 'top' }]" @click="setCameraMode('top')">俯视</button>
-      <button :class="['scene-chip', { active: cameraMode === 'side' }]" @click="setCameraMode('side')">侧视</button>
-      <button :class="['scene-chip', { active: cameraMode === 'free' }]" @click="setCameraMode('free')">自由</button>
-    </div>
-
-    <div class="asset-badge" :class="{ loading: loadingAssets, failed: Boolean(assetError) }">
-      <span></span>
-      {{ assetError ? '3D 资产异常' : loadingAssets ? '正在加载模型' : 'GLB 教学模型' }}
+      <template v-if="assemblyMode">
+        <span class="scene-chip scene-chip-active">装配视图</span>
+        <button
+          data-testid="assembly-view-assembled"
+          :class="['scene-chip', { active: assemblyViewMode === 'assembled' }]"
+          @click="setAssemblyViewMode('assembled')"
+        >
+          整机
+        </button>
+        <button
+          data-testid="assembly-view-exploded"
+          :class="['scene-chip', { active: assemblyViewMode === 'exploded' }]"
+          @click="setAssemblyViewMode('exploded')"
+        >
+          爆炸视图
+        </button>
+        <span class="scene-toolbar-divider"></span>
+        <button :class="['scene-chip', { active: cameraMode === 'top' }]" @click="setCameraMode('top')">俯视</button>
+        <button :class="['scene-chip', { active: cameraMode === 'side' }]" @click="setCameraMode('side')">侧视</button>
+        <button :class="['scene-chip', { active: cameraMode === 'free' }]" @click="setCameraMode('free')">自由</button>
+      </template>
+      <template v-else>
+        <span class="scene-chip scene-chip-active">三维视图</span>
+        <button :class="['scene-chip', { active: cameraMode === 'follow' }]" @click="setCameraMode('follow')">跟随</button>
+        <button :class="['scene-chip', { active: cameraMode === 'top' }]" @click="setCameraMode('top')">俯视</button>
+        <button :class="['scene-chip', { active: cameraMode === 'side' }]" @click="setCameraMode('side')">侧视</button>
+        <button :class="['scene-chip', { active: cameraMode === 'free' }]" @click="setCameraMode('free')">自由</button>
+      </template>
     </div>
 
     <div v-if="assetError" class="asset-error" data-testid="asset-error">
@@ -27,9 +45,39 @@
     <div v-if="telemetry" class="wind-readout">风场 {{ telemetry.wind.speed_mps.toFixed(1) }} m/s</div>
 
     <div v-if="assemblyMode" :class="['scene-selection', { issue: issueSlots.length > 0 }]">
-      <b>{{ selectedSlot ? SLOT_LABELS[selectedSlot] : '选择部件' }}</b>
+      <b>{{ assemblyViewMode === 'exploded' ? '爆炸视图' : (selectedSlot ? SLOT_LABELS[selectedSlot] : '选择部件') }}</b>
       <span v-if="issueSlots.length > 0">红色高亮为当前工程检查问题</span>
+      <span v-else-if="assemblyViewMode === 'exploded'">组件按装配层级展开，可直接点击任意部件查看详情</span>
       <span v-else>{{ selectedSlot ? '蓝色高亮为当前检查部件' : '点击机架、电机、桨、电池等模型查看详情' }}</span>
+    </div>
+
+    <div
+      v-if="assemblyMode && assemblyViewMode === 'exploded'"
+      class="exploded-view-hint"
+      data-testid="exploded-view-hint"
+    >
+      <b>装配层级</b>
+      <span>上层：导航 / 飞控</span>
+      <span>外侧：桨 / 电机 / 电调</span>
+      <span>下层：电源 / 电池 / 载荷</span>
+    </div>
+
+    <div
+      v-if="assemblyMode && assemblyViewMode === 'exploded' && explodedComponentLabels.length > 0"
+      class="exploded-label-layer"
+      data-testid="exploded-label-layer"
+    >
+      <div
+        v-for="label in explodedComponentLabels"
+        :key="label.key"
+        :class="['exploded-component-label', { selected: label.selected, issue: label.issue }]"
+        :data-label-slot="label.slot"
+        data-testid="exploded-component-label"
+        :style="{ left: `${label.left}px`, top: `${label.top}px` }"
+      >
+        <span class="exploded-label-type">{{ label.meta }}</span>
+        <b :title="label.title">{{ label.title }}</b>
+      </div>
     </div>
 
     <div :class="['scene-legend', { 'scene-legend-assembly': assemblyMode }]">
@@ -57,6 +105,9 @@ import type { AircraftDefinition, AircraftEngineeringSummary, Component, MotorNa
 import type { TelemetryFrame } from '../types/telemetry'
 import { simulationPoseToThree, simulationVectorToThree } from '../three/coordinates'
 import { AircraftRenderer } from '../three/AircraftRenderer'
+import type { AssemblyViewMode } from '../three/explodedView'
+import { buildExplodedLabelDescriptors } from '../three/explodedLabels'
+import { layoutExplodedLabels } from '../three/explodedLabelLayout'
 import { SLOT_LABELS, type AssemblySlot } from '../utils/assembly'
 import { useSettingsStore } from '../stores/settings'
 
@@ -92,7 +143,26 @@ const cursor = ref('default')
 const loadingAssets = ref(true)
 const assetError = ref('')
 const cameraMode = ref<'follow' | 'top' | 'side' | 'free'>('free')
+const assemblyViewMode = ref<AssemblyViewMode>('assembled')
+const explosionProgress = ref(0)
+type ExplodedComponentLabelView = {
+  key: string
+  slot: AssemblySlot
+  title: string
+  meta: string
+  left: number
+  top: number
+  selected: boolean
+  issue: boolean
+}
+const explodedComponentLabels = ref<ExplodedComponentLabelView[]>([])
 const assemblyMode = computed(() => props.interactive)
+const directionLabelsVisible = computed(
+  () =>
+    assemblyMode.value &&
+    assemblyViewMode.value === 'assembled' &&
+    (props.selectedSlot === 'propeller' || props.issueMounts.length > 0),
+)
 const visualTestProbeEnabled = import.meta.env.DEV || import.meta.env.MODE === 'test'
 const settingsStore = useSettingsStore()
 
@@ -238,12 +308,14 @@ function buildOverlay(): void {
     )
     thrustArrows.push(arrow)
     overlayGroup.add(arrow)
-    const direction = directions?.[name] ?? (index % 2 === 0 ? 'CCW' : 'CW')
-    addLabelSprite(
-      `${name} ${direction === 'CCW' ? '逆时针' : '顺时针'}`,
-      p.clone().add(new THREE.Vector3(0, 0.34, 0)),
-      props.issueMounts.includes(name) ? '#b42318' : '#1f4f8f',
-    )
+    if (directionLabelsVisible.value) {
+      const direction = directions?.[name] ?? (index % 2 === 0 ? 'CCW' : 'CW')
+      addLabelSprite(
+        `${name} ${direction === 'CCW' ? '逆时针' : '顺时针'}`,
+        p.clone().add(new THREE.Vector3(0, 0.34, 0)),
+        props.issueMounts.includes(name) ? '#b42318' : '#1f4f8f',
+      )
+    }
   })
 
   cgMarker = new THREE.Mesh(
@@ -294,6 +366,20 @@ function syncVisualTestProbe(): void {
     aircraftBounds: aircraftRenderer.aircraftBoundsSnapshot(),
     partBounds: aircraftRenderer.partBoundsSnapshot(),
     mounts: aircraftRenderer.motorMountsSnapshot(),
+    assemblyViewMode: assemblyViewMode.value,
+    explosionProgress: explosionProgress.value,
+    directionLabelsVisible: directionLabelsVisible.value,
+    explodedParts: aircraftRenderer.explodedPartsSnapshot(),
+    explodedLabels: explodedComponentLabels.value.map(label => ({
+      key: label.key,
+      slot: label.slot,
+      title: label.title,
+      meta: label.meta,
+      left: label.left,
+      top: label.top,
+      selected: label.selected,
+      issue: label.issue,
+    })),
   }
 }
 
@@ -306,7 +392,9 @@ async function rebuildAircraftAssets(): Promise<void> {
   try {
     await aircraftRenderer.rebuild(props.aircraft, props.components)
     if (generation !== rebuildGeneration) return
+    aircraftRenderer.setExplodedProgress(explosionProgress.value)
     buildOverlay()
+    updateExplodedComponentLabels()
     applyAssemblyState()
     fitAircraftToView()
     resetFlightSmoothing()
@@ -542,6 +630,119 @@ function advanceSmoothedFlight(dt: number): void {
   windArrow?.setLength(0.42 + Math.min(1.5, windSpeed / 5), 0.14, 0.08)
 }
 
+function preferredLabelSide(slot: AssemblySlot): 'left' | 'right' | undefined {
+  if (slot === 'frame' || slot === 'battery' || slot === 'payload') return 'left'
+  if (slot === 'flight_controller' || slot === 'gnss' || slot === 'power_module') return 'right'
+  return undefined
+}
+
+function projectedPartPoint(
+  point: { x: number; y: number; z: number },
+): { x: number; y: number; visible: boolean } {
+  if (!host.value || !camera || !aircraftRenderer) return { x: 0, y: 0, visible: false }
+  const world = aircraftRenderer.root.localToWorld(new THREE.Vector3(point.x, point.y, point.z))
+  const projected = world.project(camera)
+  return {
+    x: (projected.x * 0.5 + 0.5) * host.value.clientWidth,
+    y: (-projected.y * 0.5 + 0.5) * host.value.clientHeight,
+    visible: projected.z >= -1 && projected.z <= 1,
+  }
+}
+
+function updateExplodedComponentLabels(): void {
+  if (
+    !host.value ||
+    !aircraftRenderer ||
+    !assemblyMode.value ||
+    assemblyViewMode.value !== 'exploded' ||
+    explosionProgress.value < 0.72
+  ) {
+    if (explodedComponentLabels.value.length > 0) explodedComponentLabels.value = []
+    return
+  }
+
+  const parts = aircraftRenderer.explodedPartsSnapshot()
+  const descriptors = buildExplodedLabelDescriptors(props.components, parts)
+  const viewportWidth = host.value.clientWidth
+  const viewportHeight = host.value.clientHeight
+  const centerX = viewportWidth / 2
+  const centerY = viewportHeight / 2
+
+  const anchors = descriptors.flatMap(descriptor => {
+    const candidates = parts
+      .filter(part => part.slot === descriptor.slot && part.installed && part.componentId === descriptor.componentId)
+      .map(part => projectedPartPoint(part.currentPosition))
+      .filter(point => point.visible)
+    if (candidates.length === 0) return []
+
+    // Repeated propulsion components use the visually outermost instance as
+    // the anchor, keeping their single ×4 label away from the aircraft center.
+    const anchor = candidates.reduce((best, point) => {
+      const bestDistance = Math.abs(best.x - centerX) + Math.abs(best.y - centerY) * 0.18
+      const pointDistance = Math.abs(point.x - centerX) + Math.abs(point.y - centerY) * 0.18
+      return pointDistance > bestDistance ? point : best
+    })
+
+    return [{
+      key: descriptor.key,
+      x: anchor.x,
+      y: anchor.y,
+      preferredSide: preferredLabelSide(descriptor.slot),
+    }]
+  })
+
+  const placements = layoutExplodedLabels(anchors, viewportWidth, viewportHeight)
+  const descriptorByKey = new Map(descriptors.map(descriptor => [descriptor.key, descriptor]))
+  explodedComponentLabels.value = placements.flatMap(placement => {
+    const descriptor = descriptorByKey.get(placement.key as AssemblySlot)
+    if (!descriptor) return []
+    const mountIssue = props.issueMounts.length > 0 && (
+      descriptor.slot === 'motor' || descriptor.slot === 'propeller'
+    )
+    return [{
+      key: descriptor.key,
+      slot: descriptor.slot,
+      title: descriptor.title,
+      meta: descriptor.meta,
+      left: placement.left,
+      top: placement.top,
+      selected: props.selectedSlot === descriptor.slot,
+      issue: props.issueSlots.includes(descriptor.slot) || mountIssue,
+    }]
+  })
+}
+
+function setAssemblyViewMode(mode: AssemblyViewMode): void {
+  if (!assemblyMode.value || assemblyViewMode.value === mode) return
+  assemblyViewMode.value = mode
+  if (cameraMode.value === 'follow') setCameraMode('free')
+  buildOverlay()
+  updateExplodedComponentLabels()
+  syncVisualTestProbe()
+}
+
+let lastFittedExplosionTarget = -1
+
+function advanceExplodedView(dt: number): void {
+  if (!aircraftRenderer) return
+  const target = assemblyMode.value && assemblyViewMode.value === 'exploded' ? 1 : 0
+  const alpha = 1 - Math.exp(-dt * 6.5)
+  let next = explosionProgress.value + (target - explosionProgress.value) * alpha
+  if (Math.abs(target - next) < 0.0015) next = target
+
+  if (Math.abs(next - explosionProgress.value) > 1e-6) {
+    explosionProgress.value = next
+    aircraftRenderer.setExplodedProgress(next)
+    updateExplodedComponentLabels()
+    syncVisualTestProbe()
+  }
+
+  if (next === target && lastFittedExplosionTarget !== target && !props.telemetry) {
+    lastFittedExplosionTarget = target
+    fitAircraftToView()
+  }
+}
+
 function setPointer(event: PointerEvent): void {
   const canvas = renderer?.domElement
   if (!canvas) return
@@ -621,6 +822,7 @@ function animate(now = performance.now()): void {
   animationId = requestAnimationFrame(animate)
   const dt = Math.min(0.05, Math.max(0, (now - previousAnimationTime) / 1000))
   previousAnimationTime = now
+  advanceExplodedView(dt)
   advanceSmoothedFlight(dt)
   const rotorInputs = props.telemetry ? flightSmoothing.renderedThrusts : undefined
   aircraftRenderer?.rotateRotors(
@@ -628,6 +830,7 @@ function animate(now = performance.now()): void {
   )
   updateManagedCamera(dt)
   controls?.update()
+  updateExplodedComponentLabels()
   renderer?.render(scene, camera)
 }
 
@@ -694,7 +897,8 @@ onMounted(async () => {
   renderer.domElement.addEventListener('pointerdown', onPointerDown)
   renderer.domElement.addEventListener('pointermove', onPointerMove)
 
-  setCameraMode(settingsStore.settings.display_3d.default_camera)
+  const configuredCamera = settingsStore.settings.display_3d.default_camera
+  setCameraMode(assemblyMode.value && configuredCamera === 'follow' ? 'free' : configuredCamera)
   applyDisplaySettings()
   resize()
   window.addEventListener('resize', resize)
@@ -714,6 +918,7 @@ watch(
   () => {
     applyAssemblyState()
     buildOverlay()
+    updateExplodedComponentLabels()
   },
   { deep: true },
 )
@@ -756,41 +961,6 @@ onBeforeUnmount(() => {
 .asset-toolbar button.scene-chip:hover {
   transform: translateY(-1px);
 }
-.asset-badge {
-  position: absolute;
-  z-index: 4;
-  top: 12px;
-  right: 12px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 9px;
-  border-radius: 999px;
-  border: 1px solid rgba(190,205,222,.9);
-  background: rgba(255,255,255,.84);
-  color: #526176;
-  font-size: 10px;
-  pointer-events: none;
-  box-shadow: 0 10px 25px rgba(9, 20, 42, 0.08);
-}
-.asset-badge span {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #16a34a;
-}
-.asset-badge.loading span {
-  background: #d97706;
-  animation: assetPulse 1s infinite ease-in-out;
-}
-.asset-badge.failed {
-  border-color: #efc5c0;
-  color: #b42318;
-}
-.asset-badge.failed span {
-  background: #dc2626;
-  animation: none;
-}
 .asset-error {
   position: absolute;
   z-index: 10;
@@ -814,5 +984,84 @@ onBeforeUnmount(() => {
 .scene-selection.issue { border-color:#efb2ac; background:rgba(255,247,246,.94); }
 .scene-selection.issue b,.scene-selection.issue span { color:#9f2f25; }
 .legend-issue { background:#dc2626; }
-@keyframes assetPulse { 50% { opacity: .3; } }
+
+.scene-toolbar-divider {
+  width: 1px;
+  height: 20px;
+  align-self: center;
+  background: rgba(132, 151, 177, .28);
+  margin: 0 2px;
+}
+.exploded-label-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+.exploded-component-label {
+  position: absolute;
+  width: 164px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 7px;
+  overflow: hidden;
+  border: 1px solid rgba(105, 167, 219, .28);
+  border-radius: 8px;
+  background: rgba(9, 20, 35, .86);
+  color: #edf6ff;
+  box-shadow: 0 6px 14px rgba(5, 14, 28, .16);
+  backdrop-filter: blur(7px);
+}
+.exploded-component-label.selected {
+  border-color: rgba(96, 165, 250, .82);
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, .22), 0 6px 14px rgba(5, 14, 28, .16);
+}
+.exploded-component-label.issue {
+  border-color: rgba(248, 113, 113, .82);
+  background: rgba(52, 18, 23, .90);
+}
+.exploded-label-type {
+  flex: 0 0 auto;
+  color: #7dd3fc;
+  font-size: 9px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.exploded-component-label.issue .exploded-label-type { color: #fca5a5; }
+.exploded-component-label b {
+  min-width: 0;
+  overflow: hidden;
+  color: #f8fbff;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.exploded-view-hint {
+  position: absolute;
+  z-index: 4;
+  top: 58px;
+  right: 12px;
+  display: grid;
+  gap: 3px;
+  min-width: 172px;
+  padding: 9px 11px;
+  border: 1px solid rgba(190, 205, 222, .92);
+  border-radius: 12px;
+  background: rgba(255,255,255,.88);
+  color: #607087;
+  font-size: 10px;
+  pointer-events: none;
+  box-shadow: 0 10px 25px rgba(9, 20, 42, 0.08);
+  backdrop-filter: blur(10px);
+}
+.exploded-view-hint b {
+  margin-bottom: 2px;
+  color: #203047;
+  font-size: 11px;
+}
+
 </style>
