@@ -1,4 +1,4 @@
-# EduQuad-650 Realistic Edition 2.0
+# EduQuad-650 Realistic Edition 2.0.1 · Propeller Fit Fix
 
 这些 GLB 与原 V1.1 文件名保持一致，因此现有 Component.visual、组件库、装配页、爆炸视图和 Replay 不需要修改即可使用。
 

@@ -116,7 +116,10 @@ const STEP_ISSUE_CODES: Partial<Record<AssemblyStepId, string[]>> = {
     'SHORT_ESTIMATED_ENDURANCE',
   ],
   payload: ['HIGH_PAYLOAD_MASS_FRACTION'],
-  propeller: ['PROPELLER_DIRECTION_MISMATCH'],
+  propeller: [
+    'PROPELLER_DIRECTION_MISMATCH',
+    'PROPELLER_FRAME_OVERLAP',
+  ],
 }
 
 const SCENE_PART_PREFIXES: Array<[string, AssemblySlot]> = [

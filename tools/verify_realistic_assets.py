@@ -42,7 +42,7 @@ def check(name: str, cond: bool, detail: str = '') -> None:
     checks.append((name, bool(cond), detail))
 
 check('manifest assetVersion compatibility', MANIFEST.get('assetVersion') == '1.1.0', str(MANIFEST.get('assetVersion')))
-check('manifest visual edition', MANIFEST.get('visualEdition') == 'EduQuad-650 Realistic Edition 2.0')
+check('manifest visual edition', MANIFEST.get('visualEdition') == 'EduQuad-650 Realistic Edition 2.0.1 · Propeller Fit Fix')
 check('manifest meter units', MANIFEST.get('units') == 'meter')
 check('manifest PBR declaration', 'PBR' in MANIFEST.get('materialSystem', ''))
 

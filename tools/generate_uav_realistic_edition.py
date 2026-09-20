@@ -105,6 +105,41 @@ def torus(major, minor, pos=(0,0,0), material=M["aluminium"], axis="y", major_se
     mesh.apply_translation(pos)
     return mesh
 
+def annular_cylinder(outer_radius, inner_radius, height, pos=(0,0,0), material=M["dark_metal"], sections=64):
+    """Closed annular prism aligned to model +Y.
+
+    Propeller hubs use this instead of a solid cylinder so the motor
+    shaft/adapter can occupy the center without visible mesh intersection.
+    """
+    if not 0 < inner_radius < outer_radius:
+        raise ValueError("annular_cylinder requires 0 < inner_radius < outer_radius")
+    angles=np.linspace(0,2*math.pi,sections,endpoint=False)
+    y0=-height/2
+    y1=height/2
+    verts=[]
+    for y in (y0,y1):
+        for r in (outer_radius,inner_radius):
+            for a in angles:
+                verts.append([r*math.cos(a),y,r*math.sin(a)])
+    verts=np.asarray(verts,float)
+
+    outer0=0
+    inner0=sections
+    outer1=sections*2
+    inner1=sections*3
+    faces=[]
+    for i in range(sections):
+        j=(i+1)%sections
+        faces += [[outer0+i, outer0+j, outer1+j], [outer0+i, outer1+j, outer1+i]]
+        faces += [[inner0+i, inner1+j, inner0+j], [inner0+i, inner1+i, inner1+j]]
+        faces += [[outer1+i, outer1+j, inner1+j], [outer1+i, inner1+j, inner1+i]]
+        faces += [[outer0+i, inner0+j, outer0+j], [outer0+i, inner0+i, inner0+j]]
+
+    mesh=trimesh.Trimesh(vertices=np.asarray(verts),faces=np.asarray(faces),process=False)
+    apply_mat(mesh,material)
+    mesh.apply_translation(pos)
+    return mesh
+
 def cyl_between(p0, p1, radius, material=M["carbon"], sections=22):
     p0 = np.asarray(p0, float); p1 = np.asarray(p1, float)
     v = p1 - p0
@@ -248,10 +283,18 @@ def build_motor(radius=.030, height=.054, accent="red", detail=2):
         pillar.apply_transform(rotation_matrix(-a,[0,1,0],point=[x,height*.61,z]))
         add(s,f"bell_pillar_{i}",pillar)
     # top cap / shaft / prop adapter / nut
+    # Motor asset owns the adapter and retaining nut. Propeller assets do not
+    # duplicate these fasteners, preventing assembled mesh intersection.
     add(s,"top_cap",cyl(radius*.58,.007,(0,height*.88,0),M["aluminium"],sections=48))
-    add(s,"shaft",cyl(.0035,height*.43,(0,height*1.07,0),M["steel"],sections=32))
-    add(s,"prop_adapter",cyl(.0075,.015,(0,height*1.17,0),M["aluminium"],sections=36))
-    add(s,"prop_nut",cyl(.0068,.009,(0,height*1.29,0),accent_mat,sections=6))
+    # Standardized visual prop interface used by AircraftRenderer (Y = 0.064 m).
+    # Keeping the interface plane stable across 5010/4008 prevents a prop from
+    # floating on the smaller motor or intersecting the larger one.
+    prop_mount_y=.064
+    shaft_bottom=height*.82
+    shaft_top=prop_mount_y+.0054
+    add(s,"shaft",cyl(.0035,shaft_top-shaft_bottom,(0,(shaft_top+shaft_bottom)/2,0),M["steel"],sections=32))
+    add(s,"prop_adapter",cyl(.0075,.015,(0,prop_mount_y-.00082,0),M["aluminium"],sections=36))
+    add(s,"prop_nut",cyl(.0068,.009,(0,prop_mount_y+.00566,0),accent_mat,sections=6))
 
     # four mounting ears + screws
     for i,a in enumerate((0, math.pi/2, math.pi, 3*math.pi/2)):
@@ -339,21 +382,51 @@ def twisted_blade(length, root_chord, tip_chord, thickness=.0048, direction=1, m
     return mesh
 
 def build_prop(diameter_in=15.0,direction="ccw",detail=2):
+    """Build one dimensionally honest propeller.
+
+    The local origin remains the shared motor/prop mount datum used by the
+    renderer. The hub is annular, while the motor GLB owns the shaft/adapter
+    and retaining nut. This prevents the duplicate-center geometry that caused
+    the visual overlap in Realistic Edition 2.0.
+    """
     s=trimesh.Scene()
     sign=1 if direction=="ccw" else -1
     radius=diameter_in*0.0254/2
-    add(s,"hub_lower",cyl(.0175,.009,(0,0,0),M["black_metal"],sections=44))
-    add(s,"hub_ring",torus(.013,.003,(0,.005,0),M["aluminium"],axis="y",major_sections=40,minor_sections=10))
-    add(s,"hub_cap",cyl(.0105,.009,(0,.011,0),M["dark_metal"],sections=40))
-    # two twisted, slightly swept blades
-    base=twisted_blade(radius*.94,radius*.22,radius*.085,.0048 if diameter_in>=15 else .0043,sign,M["prop"],14)
+
+    # Real center bore: 8.2 mm radius clears the visual 7.5 mm prop adapter.
+    # Hub stays below the mount datum so the motor retaining nut remains above.
+    add(s,"hub_body",annular_cylinder(.0175,.0082,.006,(0,-.003,0),M["black_metal"],sections=64))
+    add(s,"hub_reinforcement",torus(.0135,.0028,(0,-.001,0),M["aluminium"],axis="y",major_sections=48,minor_sections=10))
+
+    base=twisted_blade(
+        radius,
+        radius*.22,
+        radius*.085,
+        .0048 if diameter_in>=15 else .0043,
+        sign,
+        M["prop"],
+        16,
+    )
+
+    # Chord and sweep can push vertices slightly outside the nominal radius.
+    # Normalize the complete aerodynamic section so the visual swept diameter
+    # exactly matches diameter_in instead of silently growing/shrinking.
+    vertices=np.asarray(base.vertices).copy()
+    horizontal=np.hypot(vertices[:,0],vertices[:,2])
+    max_radius=float(horizontal.max())
+    if max_radius <= 0:
+        raise RuntimeError("propeller blade has no horizontal extent")
+    radial_scale=radius/max_radius
+    vertices[:,0] *= radial_scale
+    vertices[:,2] *= radial_scale
+    vertices[:,1] += .001
+    base.vertices=vertices
+
     for idx,angle in enumerate((0,math.pi)):
-        b=base.copy()
-        b.apply_transform(rotation_matrix(angle,[0,1,0]))
-        add(s,f"blade_{idx}",b)
-    # center nut/washer
-    add(s,"washer",cyl(.008,.0025,(0,.017,0),M["steel"],sections=32))
-    add(s,"nut",cyl(.0065,.006,(0,.021,0),M["aluminium"],sections=6))
+        blade=base.copy()
+        blade.apply_transform(rotation_matrix(angle,[0,1,0]))
+        add(s,f"blade_{idx}",blade)
+
     return s
 
 def build_battery(length=.165,width=.070,height=.060,dark=False,detail=2):
@@ -484,7 +557,7 @@ def build_complete_650(detail=2):
         ep=np.array(p,float)*.64; ep[1]=.073
         copy_scene(s,build_esc(.056,.027,"blue",detail),f"esc/{name}/",translation_matrix(ep))
         direction="ccw" if name in ("M1","M3") else "cw"
-        copy_scene(s,build_prop(15,direction,detail),f"prop/{name}/",translation_matrix((p[0],p[1]+.070,p[2])))
+        copy_scene(s,build_prop(15,direction,detail),f"prop/{name}/",translation_matrix((p[0],p[1]+.064,p[2])))
     copy_scene(s,build_power(.060,.045,False,detail),"power/",translation_matrix((0,.020,0)))
     copy_scene(s,build_fc(.050,1,detail),"fc/",translation_matrix((0,.083,0)))
     copy_scene(s,build_battery(.165,.070,.060,False,detail),"battery/",translation_matrix((-.030,-.100,0)))
@@ -601,7 +674,7 @@ for glb,png in THUMB_MAP.items():
 
 manifest={
     "assetVersion":"1.1.0",
-    "visualEdition":"EduQuad-650 Realistic Edition 2.0",
+    "visualEdition":"EduQuad-650 Realistic Edition 2.0.1 · Propeller Fit Fix",
     "units":"meter",
     "axes":{"x":"+X forward","y":"+Y up","z":"+Z right"},
     "scope":"教学级工程数字样机。几何、材质和结构用于教学可视化，不代表任何厂商制造级CAD。",
@@ -618,14 +691,14 @@ manifest={
         "3-axis gimbal camera with lens train"
     ],
     "componentMap":{
-        "1":{"type":"frame","file":"frame_650.glb","thumbnail":"thumbnails/frame_650.png"},
-        "2":{"type":"frame","file":"frame_450.glb","thumbnail":"thumbnails/frame_450.png"},
+        "1":{"type":"frame","file":"frame_650.glb","thumbnail":"thumbnails/frame_650.png","motor_diagonal_m":0.65},
+        "2":{"type":"frame","file":"frame_450.glb","thumbnail":"thumbnails/frame_450.png","motor_diagonal_m":0.45},
         "10":{"type":"motor","file":"motor_5010_360kv.glb","thumbnail":"thumbnails/motor_5010.png"},
         "11":{"type":"motor","file":"motor_4008_500kv.glb","thumbnail":"thumbnails/motor_4008.png"},
         "20":{"type":"esc","file":"esc_30a.glb","thumbnail":"thumbnails/esc_30a.png"},
         "21":{"type":"esc","file":"esc_40a.glb","thumbnail":"thumbnails/esc_40a.png"},
-        "30":{"type":"propeller","cw":"prop_15_cw.glb","ccw":"prop_15_ccw.glb","thumbnail":"thumbnails/prop_15.png"},
-        "31":{"type":"propeller","cw":"prop_14_cw.glb","ccw":"prop_14_ccw.glb","thumbnail":"thumbnails/prop_14.png"},
+        "30":{"type":"propeller","cw":"prop_15_cw.glb","ccw":"prop_15_ccw.glb","thumbnail":"thumbnails/prop_15.png","swept_diameter_m":0.381},
+        "31":{"type":"propeller","cw":"prop_14_cw.glb","ccw":"prop_14_ccw.glb","thumbnail":"thumbnails/prop_14.png","swept_diameter_m":0.3556},
         "40":{"type":"battery","file":"battery_6s_10000.glb","thumbnail":"thumbnails/battery_10000.png"},
         "41":{"type":"battery","file":"battery_6s_16000.glb","thumbnail":"thumbnails/battery_16000.png"},
         "50":{"type":"power_module","file":"power_120a.glb","thumbnail":"thumbnails/power_120.png"},
@@ -635,13 +708,14 @@ manifest={
         "70":{"type":"gnss","file":"gnss_m8n.glb","thumbnail":"thumbnails/gnss_m8n.png"},
         "80":{"type":"payload","file":"payload_camera_300g.glb","thumbnail":"thumbnails/payload_camera.png"},
     },
+    "fitContractVersion":"1.0",
     "motorDirection":{"M1":"CCW","M2":"CW","M3":"CCW","M4":"CW"},
     "referenceComplete":"eduquad650_reference.glb",
     "metrics":metrics,
 }
 (MODEL_DIR/"asset_manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
 (MODEL_DIR/"REALISTIC_EDITION.md").write_text(
-    "# EduQuad-650 Realistic Edition 2.0\n\n"
+    "# EduQuad-650 Realistic Edition 2.0.1 · Propeller Fit Fix\n\n"
     "这些 GLB 与原 V1.1 文件名保持一致，因此现有 Component.visual、组件库、装配页、爆炸视图和 Replay 不需要修改即可使用。\n\n"
     "模型采用 glTF 2.0 PBR metallic-roughness 材质，目标是教学级工程数字样机，不是制造级 CAD。\n",
     encoding="utf-8"
@@ -649,7 +723,7 @@ manifest={
 (ROOT/"docs").mkdir(parents=True,exist_ok=True)
 render_scene(scenes["eduquad650_reference.glb"], ROOT/"docs"/"eduquad650_realistic_preview.png", elev=26, azim=-42)
 (ROOT/"docs"/"17_REALISTIC_ASSET_EDITION_CN.md").write_text(
-    """# UAV Studio — EduQuad-650 Realistic Edition 2.0
+    """# UAV Studio — EduQuad-650 Realistic Edition 2.0.1 · Propeller Fit Fix
 
 ## 定位
 

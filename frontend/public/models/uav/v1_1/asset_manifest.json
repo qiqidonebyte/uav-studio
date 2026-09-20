@@ -1,6 +1,6 @@
 {
   "assetVersion": "1.1.0",
-  "visualEdition": "EduQuad-650 Realistic Edition 2.0",
+  "visualEdition": "EduQuad-650 Realistic Edition 2.0.1 · Propeller Fit Fix",
   "units": "meter",
   "axes": {
     "x": "+X forward",
@@ -24,12 +24,14 @@
     "1": {
       "type": "frame",
       "file": "frame_650.glb",
-      "thumbnail": "thumbnails/frame_650.png"
+      "thumbnail": "thumbnails/frame_650.png",
+      "motor_diagonal_m": 0.65
     },
     "2": {
       "type": "frame",
       "file": "frame_450.glb",
-      "thumbnail": "thumbnails/frame_450.png"
+      "thumbnail": "thumbnails/frame_450.png",
+      "motor_diagonal_m": 0.45
     },
     "10": {
       "type": "motor",
@@ -55,13 +57,15 @@
       "type": "propeller",
       "cw": "prop_15_cw.glb",
       "ccw": "prop_15_ccw.glb",
-      "thumbnail": "thumbnails/prop_15.png"
+      "thumbnail": "thumbnails/prop_15.png",
+      "swept_diameter_m": 0.381
     },
     "31": {
       "type": "propeller",
       "cw": "prop_14_cw.glb",
       "ccw": "prop_14_ccw.glb",
-      "thumbnail": "thumbnails/prop_14.png"
+      "thumbnail": "thumbnails/prop_14.png",
+      "swept_diameter_m": 0.3556
     },
     "40": {
       "type": "battery",
@@ -104,6 +108,7 @@
       "thumbnail": "thumbnails/payload_camera.png"
     }
   },
+  "fitContractVersion": "1.0",
   "motorDirection": {
     "M1": "CCW",
     "M2": "CW",
@@ -121,11 +126,11 @@
       "triangles": 4876
     },
     "motor_5010_360kv.glb": {
-      "bytes": 105620,
+      "bytes": 105636,
       "triangles": 7672
     },
     "motor_4008_500kv.glb": {
-      "bytes": 105840,
+      "bytes": 105848,
       "triangles": 7672
     },
     "esc_30a.glb": {
@@ -137,20 +142,20 @@
       "triangles": 1296
     },
     "prop_15_cw.glb": {
-      "bytes": 31212,
-      "triangles": 1504
+      "bytes": 32540,
+      "triangles": 1720
     },
     "prop_15_ccw.glb": {
-      "bytes": 31212,
-      "triangles": 1504
+      "bytes": 32540,
+      "triangles": 1720
     },
     "prop_14_cw.glb": {
-      "bytes": 31212,
-      "triangles": 1504
+      "bytes": 32540,
+      "triangles": 1720
     },
     "prop_14_ccw.glb": {
-      "bytes": 31212,
-      "triangles": 1504
+      "bytes": 32540,
+      "triangles": 1720
     },
     "battery_6s_10000.glb": {
       "bytes": 26388,
@@ -185,8 +190,8 @@
       "triangles": 2664
     },
     "eduquad650_reference.glb": {
-      "bytes": 707296,
-      "triangles": 54056
+      "bytes": 702724,
+      "triangles": 54920
     }
   }
 }
