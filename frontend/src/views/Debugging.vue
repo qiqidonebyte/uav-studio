@@ -1,488 +1,833 @@
 <template>
-  <main class="debug-page">
-    <section class="hero-card">
-      <div>
-        <p class="eyebrow">SYSTEM COMMISSIONING · 教学工作台</p>
-        <h1>无人机系统调试</h1>
-        <p class="hero-copy">
-          对当前数字样机完成传感器、动力、电源、控制链路与起飞前检查，形成“装配 → 调试 → 飞行验证”的连续实训流程。
-        </p>
-      </div>
-      <div class="hero-aircraft">
-        <span>当前飞机</span>
-        <strong>{{ assemblyStore.aircraftName }}</strong>
-        <small>{{ assemblyStore.validation.passed ? '装配基础检查已通过' : '装配存在阻断项，请先修正' }}</small>
-      </div>
-    </section>
-
-    <section class="status-grid">
-      <article :class="['status-card', readinessClass]">
-        <span>调试结论</span>
-        <strong>{{ readinessZh }}</strong>
-        <small>{{ readinessHint }}</small>
-      </article>
-      <article class="status-card">
-        <span>调试得分</span>
-        <strong>{{ evaluation.score }}</strong>
-        <small>{{ evaluation.passCount }} 通过 · {{ evaluation.warningCount }} 警告 · {{ evaluation.errorCount }} 阻断</small>
-      </article>
-      <article class="status-card">
-        <span>工程推重比</span>
-        <strong>{{ engineeringValue('thrust_weight_ratio', 2) }}</strong>
-        <small>课程推荐：≥ 1.80</small>
-      </article>
-      <article class="status-card">
-        <span>预计续航</span>
-        <strong>{{ engineeringValue('estimated_flight_time_min', 1, ' min') }}</strong>
-        <small>来自当前飞机工程模型</small>
-      </article>
-    </section>
-
-    <section class="scenario-card">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">TRAINING PRESETS</p>
-          <h2>调试训练场景</h2>
-        </div>
-        <button class="ghost-button" type="button" @click="resetNormal">恢复标准状态</button>
-      </div>
-      <div class="scenario-list">
+  <div class="debug-page">
+    <aside class="debug-sidebar">
+      <section class="side-section">
+        <div class="side-title">调试流程</div>
         <button
-          v-for="scenario in scenarios"
-          :key="scenario.key"
-          type="button"
-          :class="['scenario-item', { active: state.scenarioKey === scenario.key }]"
-          @click="selectScenario(scenario.key)"
+          v-for="(step, index) in steps"
+          :key="step.key"
+          :class="['flow-step', { active: activeSection === step.key }]"
+          @click="activeSection = step.key"
         >
-          <span>{{ scenario.index }}</span>
-          <div>
-            <strong>{{ scenario.title }}</strong>
-            <small>{{ scenario.description }}</small>
-          </div>
+          <span class="step-no">{{ index + 1 }}</span>
+          <span class="step-icon">{{ step.icon }}</span>
+          <span class="step-copy">
+            <b>{{ step.title }}</b>
+            <small>{{ step.subtitle }}</small>
+          </span>
         </button>
+      </section>
+
+      <section class="side-section scenarios">
+        <div class="side-title">训练场景</div>
+        <button
+          v-for="item in scenarios"
+          :key="item.key"
+          :class="['scenario-card', { active: scenario === item.key }]"
+          @click="switchScenario(item.key)"
+        >
+          <span>{{ item.icon }}</span>
+          <div><b>{{ item.title }}</b><small>{{ item.subtitle }}</small></div>
+        </button>
+      </section>
+
+      <div class="practice-mark">
+        <b>PRACTICE</b>
+        <span>MAKE BETTER PILOTS</span>
       </div>
-    </section>
+    </aside>
 
-    <div class="workspace-grid">
-      <section class="commissioning-panel">
-        <div class="section-heading compact-heading">
-          <div>
-            <p class="eyebrow">COMMISSIONING WORKFLOW</p>
-            <h2>系统调试工作台</h2>
-          </div>
-          <span class="autosave-note">当前飞机自动保存调试状态</span>
-        </div>
+    <main class="debug-main">
+      <div class="section-tabs">
+        <button
+          v-for="tab in topTabs"
+          :key="tab.key"
+          :class="{ active: activeSection === tab.key }"
+          @click="activeSection = tab.key"
+        >{{ tab.title }}</button>
+      </div>
 
-        <div class="debug-section">
-          <div class="debug-section-title">
-            <span class="step-index">01</span>
-            <div><strong>飞控与导航传感器</strong><small>确认姿态与定位基准可用</small></div>
-            <span :class="['group-state', groupSeverity('sensors')]">{{ groupSummary('sensors') }}</span>
-          </div>
-          <div class="control-grid">
-            <label class="toggle-row">
-              <span><b>IMU 校准</b><small>加速度计 / 陀螺仪</small></span>
-              <input v-model="state.imuCalibrated" type="checkbox" />
-            </label>
-            <label class="toggle-row">
-              <span><b>罗盘校准</b><small>航向基准</small></span>
-              <input v-model="state.compassCalibrated" type="checkbox" />
-            </label>
-            <label class="field-row">
-              <span><b>GNSS 卫星数</b><small>课程起飞前检查</small></span>
-              <input v-model.number="state.gpsSatellites" type="number" min="0" max="40" step="1" />
-            </label>
-            <label class="field-row">
-              <span><b>GNSS HDOP</b><small>水平精度因子</small></span>
-              <input v-model.number="state.gpsHdop" type="number" min="0.5" max="10" step="0.1" />
-            </label>
-          </div>
-        </div>
-
-        <div class="debug-section">
-          <div class="debug-section-title">
-            <span class="step-index">02</span>
-            <div><strong>动力与电源系统</strong><small>执行电机响应、旋向与上电状态检查</small></div>
-            <span :class="['group-state', groupSeverity('propulsion')]">{{ groupSummary('propulsion') }}</span>
-          </div>
-          <div class="motor-grid">
-            <article v-for="motor in motorNames" :key="motor" class="motor-card">
-              <div><strong>{{ motor }}</strong><small>电机输出测试</small></div>
-              <label>
-                <span>响应</span>
-                <input v-model="state.motors[motor].responding" type="checkbox" />
-              </label>
-              <label>
-                <span>旋向</span>
-                <select v-model="state.motors[motor].direction">
-                  <option value="CW">CW</option>
-                  <option value="CCW">CCW</option>
-                </select>
-              </label>
-            </article>
-          </div>
-          <div class="control-grid power-grid">
-            <label class="field-row">
-              <span><b>实测电池电压</b><small>{{ batteryRangeText }}</small></span>
-              <input v-model.number="state.batteryVoltageV" type="number" min="0" max="60" step="0.1" />
-              <em>V</em>
-            </label>
-            <div class="read-only-row">
-              <span><b>最小电流裕量</b><small>ESC / 电池 / 电源模块</small></span>
-              <strong>{{ minimumCurrentMargin }}</strong>
+      <template v-if="activeSection === 'power'">
+        <div class="power-layout">
+          <section class="surface scene-surface">
+            <div class="surface-heading">
+              <div>
+                <span class="heading-icon">▣</span>
+                <b>四旋翼无人机 3D 视图</b>
+              </div>
+              <span class="heading-note">当前飞机：{{ assemblyStore.aircraftName }}</span>
             </div>
-          </div>
+
+            <div class="scene-and-controls">
+              <DebugMotorScene
+                :telemetry="debugTelemetry"
+                :aircraft="assemblyStore.aircraft"
+                :components="assemblyStore.components"
+                :engineering="assemblyStore.engineering"
+                :commanded-motor="commandedMotor"
+                :actual-motor="actualMotor"
+                :fault-motor="faultMotor"
+                :live="bridgeMode === 'live'"
+              />
+
+              <div class="motor-test-stack">
+                <button
+                  v-for="motor in motorNames"
+                  :key="motor"
+                  :class="['motor-test', { active: commandedMotor === motor }]"
+                  :disabled="motorTestBusy"
+                  @click="testMotor(motor)"
+                >
+                  <span>▶</span> 测试 {{ motor }}
+                </button>
+                <button class="stop-all" @click="stopAllMotors"><span>■</span> 全部停止</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="surface parameter-surface">
+            <div class="surface-heading">
+              <div><span class="heading-icon">▤</span><b>动力系统参数</b></div>
+            </div>
+            <div class="metric-grid">
+              <div class="metric-card"><span>▥</span><small>电池</small><b>{{ batteryText }}</b></div>
+              <div class="metric-card"><span>▥</span><small>推重比</small><b>{{ thrustRatioText }}</b></div>
+              <div class="metric-card"><span>◔</span><small>悬停油门</small><b>{{ hoverThrottleText }}</b></div>
+              <div class="metric-card"><span>ϟ</span><small>最大电流</small><b>{{ maxCurrentText }}</b></div>
+              <div class="metric-card good"><span>✓</span><small>ESC 裕量</small><b>{{ escMarginText }}</b></div>
+              <div class="metric-card good"><span>♡</span><small>电池状态</small><b>{{ batteryHealthText }}</b></div>
+            </div>
+            <div class="safety-tip">ⓘ 教学演示模式仅驱动数字旋翼；接入 PX4 后再发送真实执行机构测试指令。</div>
+          </section>
         </div>
 
-        <div class="debug-section">
-          <div class="debug-section-title">
-            <span class="step-index">03</span>
-            <div><strong>遥控链路与安全保护</strong><small>检查控制链路、失控保护与电量阈值</small></div>
-            <span :class="['group-state', groupSeverity('link')]">{{ groupSummary('link') }}</span>
-          </div>
-          <div class="control-grid">
-            <label class="toggle-row">
-              <span><b>遥控器校准</b><small>通道中位 / 行程 / 方向</small></span>
-              <input v-model="state.rcCalibrated" type="checkbox" />
-            </label>
-            <label class="field-row">
-              <span><b>控制链路质量</b><small>接收机信号模拟值</small></span>
-              <input v-model.number="state.rcSignalPercent" type="number" min="0" max="100" step="1" />
-              <em>%</em>
-            </label>
-            <label class="field-row">
-              <span><b>失控保护</b><small>课程场景策略</small></span>
-              <select v-model="state.failsafeMode">
-                <option value="RTH">RTH 返航</option>
-                <option value="LAND">LAND 降落</option>
-                <option value="HOLD">HOLD 保持</option>
-              </select>
-            </label>
-            <label class="field-row">
-              <span><b>返航高度</b><small>结合训练场障碍物设置</small></span>
-              <input v-model.number="state.rthAltitudeM" type="number" min="5" max="120" step="1" />
-              <em>m</em>
-            </label>
-            <label class="field-row">
-              <span><b>低电量阈值</b><small>一级保护</small></span>
-              <input v-model.number="state.lowBatteryPercent" type="number" min="5" max="60" step="1" />
-              <em>%</em>
-            </label>
-            <label class="field-row">
-              <span><b>严重低电量</b><small>二级保护</small></span>
-              <input v-model.number="state.criticalBatteryPercent" type="number" min="5" max="50" step="1" />
-              <em>%</em>
-            </label>
-          </div>
-        </div>
+        <div class="lower-grid">
+          <section class="surface actuator-surface">
+            <div class="surface-heading"><div><span class="heading-icon">⚙</span><b>执行机构状态</b></div></div>
+            <div class="actuator-list">
+              <div v-for="(motor, index) in motorNames" :key="motor" class="actuator-row">
+                <b>{{ motor }}</b><span>输出</span>
+                <div class="output-bar"><i :style="{ width: `${Math.round(motorOutputs[index] * 100)}%` }"></i></div>
+                <strong>{{ Math.round(motorOutputs[index] * 100) }}%</strong>
+              </div>
+            </div>
+          </section>
 
-        <div class="debug-section">
-          <div class="debug-section-title">
-            <span class="step-index">04</span>
-            <div><strong>起飞前系统检查</strong><small>虚拟调试结束前完成最终确认</small></div>
-            <span :class="['group-state', groupSeverity('preflight')]">{{ groupSummary('preflight') }}</span>
-          </div>
-          <div class="control-grid preflight-grid">
-            <label class="toggle-row">
-              <span><b>螺旋桨已检查</b><small>型号、旋向与紧固</small></span>
-              <input v-model="state.propellersSecured" type="checkbox" />
-            </label>
-            <label class="toggle-row">
-              <span><b>线束与接插件已检查</b><small>极性、锁止与干涉</small></span>
-              <input v-model="state.wiringSecured" type="checkbox" />
-            </label>
-            <label class="toggle-row">
-              <span><b>测试环境已确认</b><small>桨盘区域与人员防护</small></span>
-              <input v-model="state.environmentClear" type="checkbox" />
-            </label>
+          <section class="surface mapping-surface">
+            <div class="surface-heading"><div><span class="heading-icon">⚙</span><b>旋向与映射</b></div></div>
+            <table>
+              <thead><tr><th>电机</th><th>位置</th><th>理论旋向</th><th>当前响应</th></tr></thead>
+              <tbody>
+                <tr v-for="row in motorRows" :key="row.motor">
+                  <td>{{ row.motor }}</td><td>{{ row.position }}</td><td>{{ row.direction }}</td>
+                  <td :class="row.responseClass">{{ row.response }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div v-if="mappingFaultVisible" class="fault-banner">
+              <span>!</span>
+              <div>
+                <b>检测到：M1 指令触发后实际 M3 响应</b>
+                <small>疑似执行机构映射错误。可在教学场景中执行修复。</small>
+              </div>
+              <button @click="repairMotorMapping">修复映射</button>
+            </div>
+            <div v-else class="pass-banner"><span>✓</span> 电机响应与理论映射一致</div>
+          </section>
+        </div>
+      </template>
+
+      <section v-else class="surface module-placeholder">
+        <div class="module-icon">{{ currentStep.icon }}</div>
+        <div>
+          <h2>{{ currentStep.title }}</h2>
+          <p>{{ currentModuleDescription }}</p>
+          <div class="placeholder-actions">
+            <button class="primary-action" @click="appendLog(`进入${currentStep.title}调试`)" >开始教学调试</button>
+            <button @click="activeSection = 'power'">返回动力系统</button>
           </div>
         </div>
       </section>
+    </main>
 
-      <aside class="diagnosis-panel">
-        <div class="section-heading compact-heading">
-          <div>
-            <p class="eyebrow">AUTO CHECK</p>
-            <h2>自动检查结果</h2>
+    <aside class="debug-rightbar">
+      <section class="surface telemetry-surface">
+        <div class="surface-heading"><div><span class="heading-icon">▥</span><b>实时状态 / 遥测</b></div></div>
+        <div class="status-grid">
+          <div><span>飞控</span><b>{{ bridgeMode === 'live' ? 'PX4 SIH' : '教学模拟' }}</b></div>
+          <div><span>电池</span><b>{{ batteryVoltageText }}</b></div>
+          <div><span>模式</span><b class="standby">{{ px4ModeText }}</b></div>
+          <div><span>EKF</span><b :class="ekfOk ? 'ok' : 'warn'">{{ ekfText }}</b></div>
+          <div><span>GPS</span><b :class="gpsHealthy ? 'ok' : 'warn'">{{ gpsStatus }}</b></div>
+          <div><span>Arming</span><b :class="px4Armed ? 'ok' : 'bad'">{{ px4Armed ? '已解锁' : '未解锁' }}</b></div>
+          <div><span>高度</span><b>{{ liveAltitudeText }}</b></div>
+          <div><span>Bridge</span><b :class="bridgeMode === 'live' ? 'ok' : 'warn'">{{ bridgeMode === 'live' ? '在线' : '待连接' }}</b></div>
+        </div>
+        <div class="prearm-alert">
+          <span>!</span>
+          <div><b>Pre-Arm Check {{ prearmPassed ? 'Passed' : 'Failed' }}</b><small>{{ prearmMessage }}</small></div>
+        </div>
+      </section>
+
+      <section class="surface bridge-surface">
+        <div class="bridge-row">
+          <span class="dot" :class="bridgeMode === 'live' ? 'online' : 'demo'"></span>
+          <div><b>PX4 SIH</b><small>{{ bridgeDetailText }}</small></div>
+          <strong>{{ bridgeMode === 'live' ? '已连接' : '等待' }}</strong>
+        </div>
+        <div v-if="bridgeError" class="bridge-error">{{ bridgeError }}</div>
+        <div class="bridge-controls">
+          <button :disabled="bridgeBusy" @click="connectPx4">连接 PX4</button>
+          <button :disabled="bridgeBusy || bridgeMode !== 'live'" @click="runPrearmPx4">Pre-Arm</button>
+          <button :disabled="bridgeBusy || bridgeMode !== 'live' || px4Armed" @click="armPx4">解锁</button>
+          <button :disabled="bridgeBusy || bridgeMode !== 'live' || !px4Armed" @click="disarmPx4">上锁</button>
+          <button :disabled="bridgeBusy || bridgeMode !== 'live' || !px4Armed" @click="takeoffPx4">起飞 2m</button>
+          <button :disabled="bridgeBusy || bridgeMode !== 'live'" @click="landPx4">降落</button>
+        </div>
+        <div class="param-tool">
+          <div class="param-row">
+            <input v-model.trim="paramName" maxlength="16" placeholder="PX4 参数，如 RTL_RETURN_ALT" />
+            <input v-model.number="paramValue" type="number" step="0.01" placeholder="值" />
           </div>
-          <span class="score-badge">{{ evaluation.score }}</span>
-        </div>
-
-        <div class="check-list">
-          <article v-for="item in evaluation.checks" :key="item.key" :class="['check-item', item.severity]">
-            <span class="check-dot"></span>
-            <div>
-              <strong>{{ item.title }}</strong>
-              <small>{{ item.value }}</small>
-              <p v-if="item.severity !== 'pass'">{{ item.recommendation }}</p>
-            </div>
-          </article>
-        </div>
-
-        <div class="action-stack">
-          <button class="primary-button" type="button" @click="recordCheckpoint">记录本次调试结果</button>
-          <button class="secondary-button" type="button" @click="exportReport">导出调试报告</button>
-          <button v-if="evaluation.readiness === 'READY'" class="success-button" type="button" @click="goFlight">进入飞行验证</button>
-          <button v-else class="danger-button" type="button" @click="goAssembly">返回装配处理问题</button>
-        </div>
-
-        <div v-if="checkpoints.length" class="history-box">
-          <div class="history-title"><strong>调试记录</strong><small>最近 {{ checkpoints.length }} 次</small></div>
-          <div v-for="item in checkpoints.slice(0, 5)" :key="item.id" class="history-item">
-            <span :class="['history-state', item.readiness.toLowerCase()]">{{ readinessText(item.readiness) }}</span>
-            <div><b>{{ item.score }} 分</b><small>{{ formatTime(item.createdAt) }}</small></div>
+          <div class="param-actions">
+            <button :disabled="bridgeMode !== 'live' || bridgeBusy || !paramName" @click="readPx4Parameter">读取参数</button>
+            <button :disabled="bridgeMode !== 'live' || bridgeBusy || !paramName || paramValue === null" @click="writePx4Parameter">写入参数</button>
           </div>
+          <small v-if="paramMessage">{{ paramMessage }}</small>
         </div>
+        <div class="bridge-row secondary">
+          <span class="dot demo"></span>
+          <div><b>Gazebo</b><small>本阶段不接入；3D 继续使用 UAV-Studio Three.js</small></div>
+          <strong>停用</strong>
+        </div>
+      </section>
 
-        <p class="teaching-note">
-          本模块用于课程教学和虚拟调试训练，阈值为教学场景规则，不替代具体飞控厂商手册、实体机检查规程或真实飞行安全要求。
-        </p>
-      </aside>
-    </div>
-  </main>
+      <section class="surface log-surface">
+        <div class="surface-heading">
+          <div><span class="heading-icon">▤</span><b>调试记录</b></div>
+          <button class="clear-log" @click="logs = []">清空记录</button>
+        </div>
+        <div class="timeline">
+          <div v-for="item in logs" :key="item.id" :class="['log-item', item.level]">
+            <span class="timeline-dot"></span>
+            <time>{{ item.time }}</time>
+            <div><b>{{ item.title }}</b><small>{{ item.detail }}</small></div>
+          </div>
+          <div v-if="logs.length === 0" class="empty-log">尚无调试记录</div>
+        </div>
+      </section>
+
+      <section class="surface score-surface">
+        <span class="trophy">♛</span>
+        <div><small>当前调试得分</small><b>{{ score }}<em>/100</em></b></div>
+        <div class="remaining"><span>未完成项：</span><b>{{ remainingTasks }}</b></div>
+      </section>
+
+      <div class="right-actions">
+        <button @click="saveDebugReport">▣ 保存调试记录</button>
+        <RouterLink class="flight-action" to="/flight">➤ 进入飞行验证</RouterLink>
+      </div>
+    </aside>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import DebugMotorScene from '../components/DebugMotorScene.vue'
+import { px4Api, type Px4Telemetry } from '../api/px4'
 import { useAssemblyStore } from '../stores/assembly'
-import { useAuthStore } from '../stores/auth'
-import type { Component, MotorName } from '../types/aircraft'
-import type {
-  DebugGroup,
-  DebugReadiness,
-  DebuggingBenchState,
-  DebuggingCheckpoint,
-  DebuggingContext,
-} from '../types/debugging'
-import {
-  applyDebuggingScenario,
-  defaultDebuggingBenchState,
-  evaluateDebugging,
-} from '../utils/debugging'
+import type { MotorName } from '../types/aircraft'
+import type { MotorVector, TelemetryFrame } from '../types/telemetry'
+import { calculateDebugScore, resolveMotorResponse, type DebugScenario } from '../utils/debugging'
 
-const router = useRouter()
+type SectionKey = 'sensors' | 'rc' | 'power' | 'safety' | 'preflight'
+type ScenarioKey = DebugScenario
+type LogLevel = 'info' | 'warn' | 'error' | 'success'
+
+interface DebugLog {
+  id: number
+  time: string
+  title: string
+  detail: string
+  level: LogLevel
+}
+
 const assemblyStore = useAssemblyStore()
-const authStore = useAuthStore()
-const motorNames: MotorName[] = ['M1', 'M2', 'M3', 'M4']
+const activeSection = ref<SectionKey>('power')
+const scenario = ref<ScenarioKey>('mapping')
+const bridgeMode = ref<'demo' | 'live'>('demo')
+const bridgeError = ref('')
+const bridgeBusy = ref(false)
+const liveTelemetry = ref<Px4Telemetry | null>(null)
+const requestedStreams = ref(false)
+const commandedMotor = ref<MotorName | null>(null)
+const actualMotor = ref<MotorName | null>(null)
+const mappingRepaired = ref(false)
+const motorOutputs = ref<MotorVector>([0, 0, 0, 0])
+const motorTestBusy = ref(false)
+const clockTick = ref(0)
+const logs = ref<DebugLog[]>([])
+const paramName = ref('RTL_RETURN_ALT')
+const paramValue = ref<number | null>(null)
+const paramMessage = ref('')
+let timer: number | undefined
+let stopTimer: number | undefined
+let px4PollTimer: number | undefined
+let pollingPx4 = false
+let logId = 0
 
+const motorNames: MotorName[] = ['M1', 'M2', 'M3', 'M4']
+const motorIndex: Record<MotorName, number> = { M1: 0, M2: 1, M3: 2, M4: 3 }
+const motorMeta: Record<MotorName, { position: string; direction: string }> = {
+  M1: { position: '右前', direction: 'CCW（逆时针）' },
+  M2: { position: '右后', direction: 'CW（顺时针）' },
+  M3: { position: '左后', direction: 'CCW（逆时针）' },
+  M4: { position: '左前', direction: 'CW（顺时针）' },
+}
+
+const steps = [
+  { key: 'sensors' as const, icon: '▦', title: '飞控与传感器', subtitle: '检查飞控、IMU、指南针等' },
+  { key: 'rc' as const, icon: '⌁', title: '遥控系统', subtitle: '验证遥控器与接收机' },
+  { key: 'power' as const, icon: '✤', title: '动力系统', subtitle: '电机 / ESC / 桨叶测试' },
+  { key: 'safety' as const, icon: '◇', title: '安全设置', subtitle: 'Failsafe 与安全策略' },
+  { key: 'preflight' as const, icon: '☑', title: '起飞前检查', subtitle: '完成整机检查' },
+]
+const topTabs = steps.slice(0, 4)
 const scenarios = [
-  { key: 'normal', index: 'A', title: '标准调试', description: '所有系统处于课程推荐状态，用于熟悉完整流程。' },
-  { key: 'gps', index: 'B', title: 'GNSS 定位异常', description: '卫星数不足、HDOP 偏高，训练导航系统排查。' },
-  { key: 'motor', index: 'C', title: '动力系统异常', description: '包含电机旋向与输出响应问题。' },
-  { key: 'failsafe', index: 'D', title: '安全保护异常', description: '控制链路偏弱、失控策略与返航高度不合理。' },
-  { key: 'exam', index: 'E', title: '综合考核', description: '混合多个调试问题，适合学生独立排查。' },
+  { key: 'standard' as const, icon: '◇', title: '标准调试', subtitle: '基础功能调试流程' },
+  { key: 'mapping' as const, icon: '△', title: '电机映射故障', subtitle: '教学模拟映射错误' },
+  { key: 'compass' as const, icon: '◉', title: '罗盘异常', subtitle: '教学模拟指南针异常' },
+  { key: 'failsafe' as const, icon: '⌘', title: 'Failsafe 异常', subtitle: '教学模拟失控保护' },
 ]
 
-function numericParameter(component: Component | null, key: string): number | null {
-  const value = component?.parameters_json?.[key]
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
+const currentStep = computed(() => steps.find(item => item.key === activeSection.value) ?? steps[2])
+const currentModuleDescription = computed(() => ({
+  sensors: '用于飞控状态、IMU、磁罗盘、GNSS 与 EKF 的教学化校准和状态观察。PX4 Bridge 已接入时读取真实 MAVLink 状态。',
+  rc: '用于通道映射、中位、行程、正反向、链路质量与失控保护的调试。',
+  power: '',
+  safety: '用于低电量保护、失控保护、返航高度和解锁条件等安全参数教学。',
+  preflight: '汇总装配、调试、参数与系统状态，形成进入飞行验证前的最后检查。',
+}[activeSection.value]))
 
+const engineering = computed(() => assemblyStore.engineering)
+const massKg = computed(() => engineering.value?.total_mass_kg ?? 2.8)
+const gravityN = computed(() => massKg.value * 9.80665)
+const maxThrustPerMotor = computed(() => engineering.value?.max_thrust_per_motor_n ?? 17.5)
+const totalThrustN = computed(() => motorOutputs.value.reduce((sum, item) => sum + item * maxThrustPerMotor.value, 0))
 const batteryComponent = computed(() => assemblyStore.componentForSlot('battery'))
-const batteryMin = computed(() => numericParameter(batteryComponent.value, 'voltage_min_v'))
-const batteryNominal = computed(() => numericParameter(batteryComponent.value, 'nominal_voltage_v'))
-const batteryMax = computed(() => numericParameter(batteryComponent.value, 'voltage_max_v'))
+const configuredBatteryVoltage = computed(() => {
+  const raw = batteryComponent.value?.parameters_json.nominal_voltage_v
+  return typeof raw === 'number' ? raw : 22.2
+})
+const batteryCells = computed(() => {
+  const raw = batteryComponent.value?.parameters_json.cell_count
+  return typeof raw === 'number' ? raw : 6
+})
+const batteryText = computed(() => `${batteryCells.value}S / ${configuredBatteryVoltage.value.toFixed(1)}V`)
+const batteryVoltageText = computed(() => {
+  const live = liveTelemetry.value?.battery.voltage_v
+  return bridgeMode.value === 'live' && typeof live === 'number'
+    ? `${live.toFixed(1)} V`
+    : `${(configuredBatteryVoltage.value + .2).toFixed(1)} V`
+})
+const thrustRatioText = computed(() => engineering.value ? engineering.value.thrust_weight_ratio.toFixed(2) : '—')
+const hoverThrottleText = computed(() => engineering.value ? `${Math.round(engineering.value.hover_throttle * 100)}%` : '—')
+const maxCurrentText = computed(() => engineering.value ? `${engineering.value.max_current_a.toFixed(0)}A` : '—')
+const escMarginText = computed(() => !engineering.value ? '待计算' : engineering.value.esc_current_margin_a >= 0 ? '通过' : '不足')
+const batteryHealthText = computed(() => !engineering.value ? '待计算' : engineering.value.battery_continuous_margin_a >= 0 ? '良好' : '风险')
 
-const state = ref<DebuggingBenchState>(defaultDebuggingBenchState())
-const checkpoints = ref<DebuggingCheckpoint[]>([])
-let loadingWorkspace = false
-
-const storageKey = computed(() => `uavstudio.debugging:${authStore.user?.id ?? 0}:${assemblyStore.activeAircraftId ?? 0}`)
-
-const context = computed<DebuggingContext>(() => {
-  const engineering = assemblyStore.engineering
-  const cg = engineering?.center_of_gravity_m
-  const horizontalCg = cg ? Math.sqrt(cg.x * cg.x + cg.y * cg.y) : null
-  return {
-    validationPassed: assemblyStore.validation.passed,
-    blockingErrorCount: assemblyStore.validation.blocking_errors.length,
-    warningCount: assemblyStore.validation.warnings.length,
-    engineeringAvailable: engineering !== null,
-    thrustWeightRatio: engineering?.thrust_weight_ratio ?? null,
-    cgHorizontalM: horizontalCg,
-    escCurrentMarginA: engineering?.esc_current_margin_a ?? null,
-    batteryContinuousMarginA: engineering?.battery_continuous_margin_a ?? null,
-    powerModuleCurrentMarginA: engineering?.power_module_current_margin_a ?? null,
-    batteryMinVoltageV: batteryMin.value,
-    batteryNominalVoltageV: batteryNominal.value,
-    batteryMaxVoltageV: batteryMax.value,
+const px4Armed = computed(() => bridgeMode.value === 'live' ? Boolean(liveTelemetry.value?.armed) : false)
+const px4ModeText = computed(() => bridgeMode.value === 'live' ? (liveTelemetry.value?.mode || 'UNKNOWN') : 'STANDBY')
+const liveAltitudeText = computed(() => {
+  const z = liveTelemetry.value?.local_position.z
+  return bridgeMode.value === 'live' && typeof z === 'number' ? `${z.toFixed(2)} m` : '0.00 m'
+})
+const gpsHealthy = computed(() => bridgeMode.value === 'live'
+  ? (liveTelemetry.value?.gps.fix_type ?? 0) >= 3
+  : scenario.value !== 'compass')
+const gpsStatus = computed(() => {
+  if (bridgeMode.value === 'live') {
+    const gps = liveTelemetry.value?.gps
+    const satellites = gps?.satellites
+    const fix = gps?.fix_type
+    return `${satellites ?? '—'} 星 / Fix ${fix ?? '—'}`
   }
+  return scenario.value === 'compass' ? '定位受限' : '7 星'
 })
-
-const evaluation = computed(() => evaluateDebugging(state.value, context.value))
-const readinessClass = computed(() => evaluation.value.readiness.toLowerCase())
-const readinessZh = computed(() => readinessText(evaluation.value.readiness))
-const readinessHint = computed(() => {
-  if (evaluation.value.readiness === 'READY') return '全部课程调试项通过，可进入飞行验证'
-  if (evaluation.value.readiness === 'CONDITIONAL') return '无阻断项，但仍有警告需要复核'
-  return '存在阻断项，暂不建议进入下一阶段'
+const ekfOk = computed(() => {
+  if (bridgeMode.value !== 'live') return scenario.value !== 'compass'
+  return liveTelemetry.value?.estimator.ok === true
 })
-
-const batteryRangeText = computed(() => {
-  if (batteryMin.value === null || batteryMax.value === null) return '当前电池未提供电压范围'
-  return `组件范围 ${batteryMin.value.toFixed(1)}–${batteryMax.value.toFixed(1)} V`
+const ekfText = computed(() => {
+  if (bridgeMode.value !== 'live') return scenario.value === 'compass' ? '异常' : '正常'
+  if (liveTelemetry.value?.estimator.ok === null || liveTelemetry.value?.estimator.ok === undefined) return '待数据'
+  return liveTelemetry.value.estimator.ok ? '正常' : '异常'
 })
-
-const minimumCurrentMargin = computed(() => {
-  const engineering = assemblyStore.engineering
-  if (!engineering) return '—'
-  return `${Math.min(
-    engineering.esc_current_margin_a,
-    engineering.battery_continuous_margin_a,
-    engineering.power_module_current_margin_a,
-  ).toFixed(1)} A`
-})
-
-function engineeringValue(key: 'thrust_weight_ratio' | 'estimated_flight_time_min', digits: number, suffix = ''): string {
-  const value = assemblyStore.engineering?.[key]
-  return typeof value === 'number' ? `${value.toFixed(digits)}${suffix}` : '—'
-}
-
-function groupChecks(group: DebugGroup) {
-  return evaluation.value.checks.filter(item => item.group === group)
-}
-
-function groupSeverity(group: DebugGroup): 'pass' | 'warning' | 'error' {
-  const items = groupChecks(group)
-  if (items.some(item => item.severity === 'error')) return 'error'
-  if (items.some(item => item.severity === 'warning')) return 'warning'
-  return 'pass'
-}
-
-function groupSummary(group: DebugGroup): string {
-  const severity = groupSeverity(group)
-  if (severity === 'pass') return '通过'
-  if (severity === 'warning') return '需复核'
-  return '有异常'
-}
-
-function readinessText(value: DebugReadiness): string {
-  if (value === 'READY') return '调试完成'
-  if (value === 'CONDITIONAL') return '条件通过'
-  return '禁止起飞'
-}
-
-function formatTime(value: string): string {
-  return new Date(value).toLocaleString('zh-CN', {
-    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-  })
-}
-
-function normalizedState(raw: unknown): DebuggingBenchState {
-  const base = defaultDebuggingBenchState(batteryNominal.value ?? 22.2)
-  if (!raw || typeof raw !== 'object') return base
-  const value = raw as Partial<DebuggingBenchState>
-  return {
-    ...base,
-    ...value,
-    motors: {
-      M1: { ...base.motors.M1, ...value.motors?.M1 },
-      M2: { ...base.motors.M2, ...value.motors?.M2 },
-      M3: { ...base.motors.M3, ...value.motors?.M3 },
-      M4: { ...base.motors.M4, ...value.motors?.M4 },
-    },
+const bridgeDetailText = computed(() => {
+  if (bridgeMode.value === 'live') {
+    const age = liveTelemetry.value?.heartbeat_age_s
+    return `MAVLink 已连接 · ${liveTelemetry.value?.connection_url ?? '14540'}${typeof age === 'number' ? ` · HB ${age.toFixed(1)}s` : ''}`
   }
+  if (bridgeError.value) return bridgeError.value
+  return '启动 Bridge 与 PX4 SIH 后点击连接'
+})
+
+const mappingFaultVisible = computed(() => bridgeMode.value === 'demo' && scenario.value === 'mapping' && !mappingRepaired.value)
+const faultMotor = computed<MotorName | null>(() => mappingFaultVisible.value ? 'M3' : null)
+const prearmPassed = computed(() => {
+  if (bridgeMode.value === 'live') return Boolean(liveTelemetry.value?.prearm_ok)
+  return scenario.value === 'standard' || (scenario.value === 'mapping' && mappingRepaired.value)
+})
+const prearmMessage = computed(() => {
+  if (bridgeMode.value === 'live') {
+    const text = liveTelemetry.value?.statustext
+    if (text) return text
+    return prearmPassed.value ? 'PX4 未报告 Pre-Arm 阻断信息。' : '等待 PX4 Pre-Arm 状态。'
+  }
+  if (scenario.value === 'mapping' && !mappingRepaired.value) return '执行机构映射未通过，请完成 M1–M4 单电机测试。'
+  if (scenario.value === 'compass') return '磁罗盘/EKF 状态异常，请进入飞控与传感器调试。'
+  if (scenario.value === 'failsafe') return '安全保护参数异常，请检查 Failsafe 设置。'
+  return '当前教学场景的前置检查已通过。'
+})
+
+const score = computed(() => {
+  if (bridgeMode.value === 'live') {
+    let value = 100
+    if (!assemblyStore.validation.passed) value -= 20
+    if (!prearmPassed.value) value -= 15
+    if (!gpsHealthy.value) value -= 10
+    return Math.max(0, value)
+  }
+  return calculateDebugScore(scenario.value, mappingRepaired.value, assemblyStore.validation.passed)
+})
+const remainingTasks = computed(() => score.value >= 95 ? '起飞前验证' : '故障修复、安全检查')
+
+const motorRows = computed(() => motorNames.map(motor => {
+  const isCommanded = commandedMotor.value === motor
+  const actual = actualMotor.value
+  const response = isCommanded
+    ? actual === motor ? '响应正确' : actual ? `实际 ${actual} 响应` : '待测试'
+    : '—'
+  return {
+    motor,
+    position: motorMeta[motor].position,
+    direction: motorMeta[motor].direction,
+    response,
+    responseClass: isCommanded && actual && actual !== motor ? 'response-fault' : isCommanded && actual === motor ? 'response-ok' : '',
+  }
+}))
+
+function liveFlightMode(): TelemetryFrame['flight_mode'] {
+  if (!liveTelemetry.value?.armed) return 'IDLE'
+  const altitude = liveTelemetry.value.local_position.z
+  const vz = liveTelemetry.value.local_position.vz
+  if (altitude < .25) return 'ARMED'
+  if (vz > .25) return 'TAKING_OFF'
+  if (vz < -.25) return 'LANDING'
+  return 'HOVERING'
 }
 
-function loadWorkspace(): void {
-  loadingWorkspace = true
-  try {
-    const raw = globalThis.localStorage?.getItem(storageKey.value)
-    if (!raw) {
-      state.value = defaultDebuggingBenchState(batteryNominal.value ?? 22.2)
-      checkpoints.value = []
-      return
+const debugTelemetry = computed<TelemetryFrame>(() => {
+  const live = bridgeMode.value === 'live' ? liveTelemetry.value : null
+  const outputs = motorOutputs.value
+  if (live) {
+    const remaining = typeof live.battery.remaining === 'number' ? live.battery.remaining / 100 : .86
+    return {
+      t: clockTick.value / 10,
+      position: { ...live.local_position },
+      velocity: { x: live.local_position.vx, y: live.local_position.vy, z: live.local_position.vz },
+      attitude: { roll: live.attitude.roll, pitch: live.attitude.pitch, yaw: live.attitude.yaw },
+      angular_velocity: { p: live.attitude.rollspeed, q: live.attitude.pitchspeed, r: live.attitude.yawspeed },
+      center_of_gravity: engineering.value?.center_of_gravity_m ?? { x: 0, y: 0, z: 0 },
+      motors: {
+        outputs: [...outputs] as MotorVector,
+        thrusts_n: outputs.map(item => item * maxThrustPerMotor.value) as MotorVector,
+      },
+      forces: { gravity_n: gravityN.value, total_thrust_n: totalThrustN.value },
+      wind: { speed_mps: 0, direction_deg: 0 },
+      power: {
+        estimated_power_w: engineering.value?.hover_power_w ?? 0,
+        battery_remaining: Math.max(0, Math.min(1, remaining)),
+        voltage_v: live.battery.voltage_v ?? configuredBatteryVoltage.value,
+        current_a: live.battery.current_a ?? 0,
+      },
+      armed: live.armed,
+      flight_mode: liveFlightMode(),
     }
-    const parsed = JSON.parse(raw) as { state?: unknown; checkpoints?: DebuggingCheckpoint[] }
-    state.value = normalizedState(parsed.state)
-    checkpoints.value = Array.isArray(parsed.checkpoints) ? parsed.checkpoints.slice(0, 20) : []
-  } catch {
-    state.value = defaultDebuggingBenchState(batteryNominal.value ?? 22.2)
-    checkpoints.value = []
-  } finally {
-    loadingWorkspace = false
   }
-}
-
-function persistWorkspace(): void {
-  if (loadingWorkspace || !assemblyStore.activeAircraftId || !authStore.user) return
-  try {
-    globalThis.localStorage?.setItem(storageKey.value, JSON.stringify({
-      state: state.value,
-      checkpoints: checkpoints.value.slice(0, 20),
-    }))
-  } catch {
-    // Local persistence is intentionally best-effort; the aircraft itself remains stored by the backend.
-  }
-}
-
-function selectScenario(key: string): void {
-  const base = defaultDebuggingBenchState(batteryNominal.value ?? 22.2)
-  state.value = applyDebuggingScenario(key, base)
-}
-
-function resetNormal(): void {
-  selectScenario('normal')
-}
-
-function recordCheckpoint(): void {
-  const result = evaluation.value
-  checkpoints.value.unshift({
-    id: `${Date.now()}`,
-    createdAt: new Date().toISOString(),
-    scenarioKey: state.value.scenarioKey,
-    readiness: result.readiness,
-    score: result.score,
-    failedKeys: result.checks.filter(item => item.severity === 'error').map(item => item.key),
-    warningKeys: result.checks.filter(item => item.severity === 'warning').map(item => item.key),
-  })
-  checkpoints.value = checkpoints.value.slice(0, 20)
-  persistWorkspace()
-}
-
-function exportReport(): void {
-  const result = evaluation.value
-  const report = {
-    exported_at: new Date().toISOString(),
-    aircraft: assemblyStore.aircraftName,
-    aircraft_id: assemblyStore.activeAircraftId,
-    scenario: state.value.scenarioKey,
-    readiness: result.readiness,
-    score: result.score,
-    bench_state: state.value,
-    engineering_context: context.value,
-    checks: result.checks,
-  }
-  const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `uav-debug-${assemblyStore.activeAircraftId ?? 'aircraft'}-${Date.now()}.json`
-  link.click()
-  URL.revokeObjectURL(url)
-}
-
-function goAssembly(): void { void router.push('/assembly') }
-function goFlight(): void { void router.push('/flight') }
-
-watch(state, persistWorkspace, { deep: true })
-watch(checkpoints, persistWorkspace, { deep: true })
-watch(() => assemblyStore.activeAircraftId, () => loadWorkspace())
-watch(() => batteryNominal.value, (value, oldValue) => {
-  if (value !== null && (oldValue === null || state.value.batteryVoltageV === 22.2)) {
-    state.value.batteryVoltageV = value
+  return {
+    t: clockTick.value / 10,
+    position: { x: 0, y: 0, z: 0 },
+    velocity: { x: 0, y: 0, z: 0 },
+    attitude: { roll: 0, pitch: 0, yaw: 0 },
+    angular_velocity: { p: 0, q: 0, r: 0 },
+    center_of_gravity: engineering.value?.center_of_gravity_m ?? { x: 0, y: 0, z: 0 },
+    motors: {
+      outputs: [...outputs] as MotorVector,
+      thrusts_n: outputs.map(item => item * maxThrustPerMotor.value) as MotorVector,
+    },
+    forces: { gravity_n: gravityN.value, total_thrust_n: totalThrustN.value },
+    wind: { speed_mps: 0, direction_deg: 0 },
+    power: {
+      estimated_power_w: engineering.value?.hover_power_w ?? 0,
+      battery_remaining: .86,
+      voltage_v: configuredBatteryVoltage.value + .2,
+      current_a: outputs.reduce((sum, item) => sum + item * 7.5, 0),
+    },
+    armed: false,
+    flight_mode: 'IDLE',
   }
 })
+
+function nowText(): string {
+  return new Date().toLocaleTimeString('zh-CN', { hour12: false })
+}
+
+function appendLog(title: string, detail = '教学调试操作', level: LogLevel = 'info'): void {
+  logs.value.push({ id: ++logId, time: nowText(), title, detail, level })
+  if (logs.value.length > 12) logs.value = logs.value.slice(-12)
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function switchScenario(next: ScenarioKey): void {
+  scenario.value = next
+  mappingRepaired.value = false
+  stopAllMotors()
+  appendLog(`切换训练场景：${scenarios.find(item => item.key === next)?.title ?? next}`, bridgeMode.value === 'live' ? '真实 PX4 模式不注入前端故障；场景仅保留教学说明' : '场景状态已重新初始化', 'info')
+}
+
+async function pollPx4(): Promise<void> {
+  if (pollingPx4) return
+  pollingPx4 = true
+  try {
+    const telemetry = await px4Api.telemetry()
+    liveTelemetry.value = telemetry
+    if (!telemetry.dependency_available) {
+      bridgeMode.value = 'demo'
+      bridgeError.value = 'Bridge 缺少 pymavlink，请安装 requirements.txt'
+    } else if (telemetry.connected) {
+      const justConnected = bridgeMode.value !== 'live'
+      bridgeMode.value = 'live'
+      bridgeError.value = ''
+      if (justConnected) appendLog('PX4 SIH 已连接', `收到 Heartbeat · System ${telemetry.system_id ?? '—'}`, 'success')
+      if (!requestedStreams.value) {
+        requestedStreams.value = true
+        void px4Api.requestStreams().catch(() => { requestedStreams.value = false })
+      }
+      if (!motorTestBusy.value && telemetry.motors.outputs.length >= 4) {
+        motorOutputs.value = telemetry.motors.outputs.slice(0, 4).map(value => Math.max(0, Math.min(1, value))) as MotorVector
+      }
+    } else {
+      bridgeMode.value = 'demo'
+      bridgeError.value = telemetry.running ? 'Bridge 已启动，等待 PX4 Heartbeat (UDP 14540)' : (telemetry.last_error || 'PX4 Bridge 未运行')
+    }
+  } catch (error) {
+    bridgeMode.value = 'demo'
+    bridgeError.value = `无法访问 PX4 Bridge：${errorText(error)}`
+  } finally {
+    pollingPx4 = false
+  }
+}
+
+async function connectPx4(): Promise<void> {
+  bridgeBusy.value = true
+  try {
+    const status = await px4Api.connect()
+    bridgeError.value = status.connected ? '' : 'Bridge 已监听 14540，等待 PX4 SIH Heartbeat'
+    appendLog('启动 PX4 Bridge 连接', status.connection_url, status.connected ? 'success' : 'warn')
+    await new Promise(resolve => window.setTimeout(resolve, 450))
+    await pollPx4()
+  } catch (error) {
+    bridgeError.value = errorText(error)
+    appendLog('PX4 连接失败', bridgeError.value, 'error')
+  } finally {
+    bridgeBusy.value = false
+  }
+}
+
+async function withBridgeAction(title: string, action: () => Promise<unknown>): Promise<void> {
+  bridgeBusy.value = true
+  try {
+    await action()
+    appendLog(title, 'PX4 已接受 MAVLink 指令', 'success')
+    await pollPx4()
+  } catch (error) {
+    appendLog(`${title}失败`, errorText(error), 'error')
+  } finally {
+    bridgeBusy.value = false
+  }
+}
+
+function armPx4(): Promise<void> { return withBridgeAction('PX4 解锁', () => px4Api.arm()) }
+function disarmPx4(): Promise<void> { return withBridgeAction('PX4 上锁', () => px4Api.disarm()) }
+function takeoffPx4(): Promise<void> { return withBridgeAction('PX4 起飞 2m', () => px4Api.takeoff(2)) }
+function landPx4(): Promise<void> { return withBridgeAction('PX4 降落', () => px4Api.land()) }
+function runPrearmPx4(): Promise<void> { return withBridgeAction('执行 PX4 Pre-Arm Check', () => px4Api.prearmCheck()) }
+
+async function readPx4Parameter(): Promise<void> {
+  bridgeBusy.value = true
+  paramMessage.value = ''
+  try {
+    const result = await px4Api.getParameter(paramName.value)
+    paramValue.value = result.value
+    paramMessage.value = `${result.name} = ${result.value}`
+    appendLog('读取 PX4 参数', paramMessage.value, 'info')
+  } catch (error) {
+    paramMessage.value = errorText(error)
+    appendLog('参数读取失败', paramMessage.value, 'error')
+  } finally {
+    bridgeBusy.value = false
+  }
+}
+
+async function writePx4Parameter(): Promise<void> {
+  if (paramValue.value === null) return
+  bridgeBusy.value = true
+  paramMessage.value = ''
+  try {
+    const result = await px4Api.setParameter(paramName.value, Number(paramValue.value))
+    paramValue.value = result.value
+    paramMessage.value = `${result.name} 已写入 ${result.value}`
+    appendLog('修改 PX4 参数', paramMessage.value, 'success')
+  } catch (error) {
+    paramMessage.value = errorText(error)
+    appendLog('参数写入失败', paramMessage.value, 'error')
+  } finally {
+    bridgeBusy.value = false
+  }
+}
+
+async function testMotor(command: MotorName): Promise<void> {
+  if (motorTestBusy.value) return
+  motorTestBusy.value = true
+  commandedMotor.value = command
+
+  if (bridgeMode.value === 'live') {
+    actualMotor.value = command
+    const outputs: MotorVector = [0, 0, 0, 0]
+    outputs[motorIndex[command]] = .25
+    motorOutputs.value = outputs
+    appendLog(`执行 ${command} PX4 单电机测试`, '发送 MAV_CMD_ACTUATOR_TEST，输出 25%', 'info')
+    try {
+      await px4Api.testMotor(command, .25, 1.5)
+      appendLog(`${command} 测试指令已接受`, 'PX4 执行机构测试由 SIH 飞控实际处理', 'success')
+    } catch (error) {
+      appendLog(`${command} 测试失败`, errorText(error), 'error')
+    }
+  } else {
+    const actual = resolveMotorResponse(scenario.value, mappingRepaired.value, command)
+    actualMotor.value = actual
+    const outputs: MotorVector = [0, 0, 0, 0]
+    outputs[motorIndex[actual]] = .62
+    motorOutputs.value = outputs
+    appendLog(`执行 ${command} 单电机测试`, `发送 ${command} 教学测试指令（62%）`, 'info')
+    if (actual !== command) {
+      appendLog(`检测到 ${actual} 异常响应`, `${command} 指令触发后，实际 ${actual} 数字旋翼转动`, 'error')
+    } else {
+      appendLog(`${command} 响应正确`, `${command} 编号与当前映射一致`, 'success')
+    }
+  }
+
+  if (stopTimer) window.clearTimeout(stopTimer)
+  stopTimer = window.setTimeout(() => {
+    motorOutputs.value = [0, 0, 0, 0]
+    actualMotor.value = null
+    motorTestBusy.value = false
+  }, 1800)
+}
+
+function stopAllMotors(): void {
+  if (stopTimer) window.clearTimeout(stopTimer)
+  motorOutputs.value = [0, 0, 0, 0]
+  actualMotor.value = null
+  motorTestBusy.value = false
+}
+
+function repairMotorMapping(): void {
+  if (bridgeMode.value === 'live') {
+    appendLog('真实 PX4 模式', 'V1 不在前端伪造映射修复；后续将通过输出函数参数完成。', 'warn')
+    return
+  }
+  mappingRepaired.value = true
+  stopAllMotors()
+  appendLog('学生修改电机映射参数', '将 M1–M4 映射恢复为理论顺序', 'warn')
+  window.setTimeout(() => {
+    commandedMotor.value = 'M1'
+    actualMotor.value = 'M1'
+    motorOutputs.value = [.45, 0, 0, 0]
+    appendLog('二次测试通过', 'M1 响应正常，电机映射恢复正确', 'success')
+    stopTimer = window.setTimeout(() => {
+      motorOutputs.value = [0, 0, 0, 0]
+      actualMotor.value = null
+    }, 1400)
+  }, 300)
+}
+
+function saveDebugReport(): void {
+  const report = {
+    generated_at: new Date().toISOString(),
+    aircraft: assemblyStore.aircraftName,
+    scenario: scenario.value,
+    bridge_mode: bridgeMode.value,
+    px4: liveTelemetry.value,
+    score: score.value,
+    engineering: assemblyStore.engineering,
+    logs: logs.value,
+  }
+  const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `uav-debug-${assemblyStore.activeAircraftId ?? 'aircraft'}-${Date.now()}.json`
+  anchor.click()
+  URL.revokeObjectURL(url)
+  appendLog('保存调试记录', '已生成包含 PX4 遥测的调试 JSON 报告', 'success')
+}
 
 onMounted(async () => {
   await assemblyStore.initialize()
-  loadWorkspace()
+  timer = window.setInterval(() => { clockTick.value += 1 }, 100)
+  px4PollTimer = window.setInterval(() => { void pollPx4() }, 300)
+  appendLog('进入动力系统调试', '优先探测真实 PX4 Bridge；未连接时保留教学模拟。', 'info')
+  if (scenario.value === 'mapping') {
+    appendLog('载入电机映射故障', '仅在教学模拟模式将 M1 指令映射到 M3', 'warn')
+  }
+  await pollPx4()
+})
+
+onBeforeUnmount(() => {
+  if (timer) window.clearInterval(timer)
+  if (px4PollTimer) window.clearInterval(px4PollTimer)
+  if (stopTimer) window.clearTimeout(stopTimer)
 })
 </script>
 
+
 <style scoped>
-.debug-page{min-height:calc(100vh - 60px);padding:22px;background:linear-gradient(180deg,#07111f 0%,#091626 55%,#07111f 100%);color:#eaf4ff}.hero-card,.scenario-card,.commissioning-panel,.diagnosis-panel,.status-card{border:1px solid rgba(125,161,202,.16);background:linear-gradient(145deg,rgba(16,34,55,.96),rgba(9,24,42,.92));box-shadow:0 16px 50px rgba(0,0,0,.16)}.hero-card{display:flex;justify-content:space-between;gap:30px;padding:24px 26px;border-radius:18px}.eyebrow{margin:0 0 6px;color:#65d8f5;font-size:10px;font-weight:800;letter-spacing:.16em}.hero-card h1,.section-heading h2{margin:0;color:#f5fbff}.hero-card h1{font-size:28px;letter-spacing:-.03em}.hero-copy{max-width:760px;margin:8px 0 0;color:#9eb3ca;font-size:13px;line-height:1.7}.hero-aircraft{min-width:260px;display:flex;flex-direction:column;justify-content:center;padding:14px 18px;border-radius:14px;background:rgba(75,151,197,.08);border:1px solid rgba(101,216,245,.12)}.hero-aircraft span,.status-card span{color:#7f9ab5;font-size:10px}.hero-aircraft strong{margin:4px 0;color:#eaf8ff;font-size:17px}.hero-aircraft small{color:#7ec7a0;font-size:10px}.status-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:12px}.status-card{padding:15px 17px;border-radius:14px}.status-card strong{display:block;margin:5px 0 3px;color:#f5fbff;font-size:23px}.status-card small{color:#8199b0;font-size:9px}.status-card.ready{border-color:rgba(74,222,128,.26)}.status-card.conditional{border-color:rgba(250,204,21,.26)}.status-card.blocked{border-color:rgba(248,113,113,.30)}.scenario-card{margin-top:12px;padding:18px;border-radius:16px}.section-heading{display:flex;align-items:center;justify-content:space-between;gap:14px}.section-heading h2{font-size:16px}.compact-heading{margin-bottom:14px}.scenario-list{display:grid;grid-template-columns:repeat(5,1fr);gap:9px;margin-top:14px}.scenario-item{display:flex;align-items:center;gap:10px;min-height:70px;padding:11px;border:1px solid rgba(132,160,191,.15);border-radius:12px;background:rgba(255,255,255,.025);color:inherit;text-align:left;cursor:pointer}.scenario-item:hover,.scenario-item.active{border-color:rgba(101,216,245,.34);background:rgba(37,143,178,.10)}.scenario-item>span{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:rgba(101,216,245,.10);color:#79e7ff;font-weight:800}.scenario-item div{display:grid;gap:3px}.scenario-item strong{font-size:11px}.scenario-item small{color:#7e96ad;font-size:8px;line-height:1.4}.ghost-button,.primary-button,.secondary-button,.success-button,.danger-button{border-radius:9px;font-weight:750;cursor:pointer}.ghost-button{height:30px;padding:0 12px;border:1px solid rgba(132,160,191,.18);background:rgba(255,255,255,.04);color:#adc1d5;font-size:9px}.workspace-grid{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:12px;margin-top:12px}.commissioning-panel,.diagnosis-panel{border-radius:16px;padding:18px}.autosave-note{color:#6f8da8;font-size:9px}.debug-section{padding:15px 0;border-top:1px solid rgba(121,152,185,.10)}.debug-section:first-of-type{border-top:0}.debug-section-title{display:grid;grid-template-columns:34px 1fr auto;align-items:center;gap:10px;margin-bottom:12px}.step-index{display:grid;place-items:center;width:32px;height:32px;border-radius:9px;background:rgba(82,190,221,.09);color:#66d8f5;font-size:10px;font-weight:800}.debug-section-title div{display:grid;gap:2px}.debug-section-title strong{font-size:12px}.debug-section-title small{color:#7890a7;font-size:8px}.group-state{padding:4px 8px;border-radius:999px;font-size:8px;font-weight:800}.group-state.pass{background:rgba(74,222,128,.10);color:#86efac}.group-state.warning{background:rgba(250,204,21,.10);color:#fde68a}.group-state.error{background:rgba(248,113,113,.10);color:#fca5a5}.control-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.toggle-row,.field-row,.read-only-row{position:relative;display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:54px;padding:9px 11px;border:1px solid rgba(128,155,186,.11);border-radius:10px;background:rgba(255,255,255,.022)}.toggle-row span,.field-row span,.read-only-row span{display:grid;gap:2px}.toggle-row b,.field-row b,.read-only-row b{font-size:10px}.toggle-row small,.field-row small,.read-only-row small{color:#7189a1;font-size:8px}.toggle-row input{width:17px;height:17px;accent-color:#2eb8dd}.field-row input,.field-row select,.motor-card select{width:88px;height:30px;padding:0 8px;border:1px solid rgba(126,158,191,.18);border-radius:7px;background:#0b1b2d;color:#dceeff;font-size:10px;outline:none}.field-row em{position:absolute;right:18px;color:#7691aa;font-size:8px;font-style:normal}.field-row input+em{pointer-events:none}.field-row:has(em) input{padding-right:25px}.motor-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:8px}.motor-card{padding:10px;border:1px solid rgba(128,155,186,.11);border-radius:10px;background:rgba(255,255,255,.022)}.motor-card>div{display:grid;margin-bottom:8px}.motor-card strong{font-size:12px}.motor-card small{color:#7189a1;font-size:8px}.motor-card label{display:flex;align-items:center;justify-content:space-between;min-height:30px;color:#829bb3;font-size:8px}.motor-card input{accent-color:#2eb8dd}.power-grid{grid-template-columns:1fr 1fr}.read-only-row>strong{color:#d7f6ff;font-size:13px}.preflight-grid{grid-template-columns:repeat(3,1fr)}.diagnosis-panel{align-self:start;position:sticky;top:76px;max-height:calc(100vh - 92px);overflow:auto}.score-badge{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:rgba(101,216,245,.10);color:#89edff;font-size:16px;font-weight:900}.check-list{display:grid;gap:6px}.check-item{display:grid;grid-template-columns:10px 1fr;gap:8px;padding:9px;border-radius:9px;background:rgba(255,255,255,.02);border:1px solid rgba(128,155,186,.09)}.check-dot{width:7px;height:7px;margin-top:4px;border-radius:50%}.check-item.pass .check-dot{background:#4ade80}.check-item.warning .check-dot{background:#facc15}.check-item.error .check-dot{background:#f87171}.check-item div{display:grid;grid-template-columns:1fr auto;gap:2px 8px}.check-item strong{font-size:9px}.check-item small{color:#8ea6bd;font-size:8px}.check-item p{grid-column:1/-1;margin:3px 0 0;color:#9ab0c5;font-size:8px;line-height:1.45}.action-stack{display:grid;gap:7px;margin-top:14px}.primary-button,.secondary-button,.success-button,.danger-button{height:34px;border:1px solid transparent;font-size:9px}.primary-button{background:#1f9fc3;color:white}.secondary-button{border-color:rgba(128,155,186,.18);background:rgba(255,255,255,.035);color:#b8cadb}.success-button{background:rgba(34,197,94,.14);border-color:rgba(74,222,128,.22);color:#a7f3d0}.danger-button{background:rgba(248,113,113,.10);border-color:rgba(248,113,113,.22);color:#fecaca}.history-box{margin-top:14px;padding-top:12px;border-top:1px solid rgba(128,155,186,.10)}.history-title,.history-item{display:flex;align-items:center;justify-content:space-between}.history-title{margin-bottom:7px}.history-title strong{font-size:9px}.history-title small{color:#7189a1;font-size:8px}.history-item{padding:6px 0;border-top:1px solid rgba(128,155,186,.06)}.history-item div{display:flex;gap:8px;align-items:center}.history-item b{font-size:9px}.history-item small{color:#6f879d;font-size:7px}.history-state{padding:3px 6px;border-radius:999px;font-size:7px;font-weight:800}.history-state.ready{background:rgba(74,222,128,.10);color:#86efac}.history-state.conditional{background:rgba(250,204,21,.10);color:#fde68a}.history-state.blocked{background:rgba(248,113,113,.10);color:#fca5a5}.teaching-note{margin:13px 0 0;padding:10px;border-radius:9px;background:rgba(250,204,21,.035);color:#8199b0;font-size:8px;line-height:1.55}
-@media(max-width:1250px){.scenario-list{grid-template-columns:repeat(3,1fr)}.workspace-grid{grid-template-columns:1fr}.diagnosis-panel{position:static;max-height:none}.status-grid{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:800px){.debug-page{padding:12px}.hero-card{flex-direction:column}.status-grid,.control-grid,.preflight-grid,.motor-grid,.scenario-list{grid-template-columns:1fr}.hero-aircraft{min-width:0}.workspace-grid{display:block}.diagnosis-panel{margin-top:12px}}
+.debug-page {
+  --bg:#071321;
+  --panel:#0b1b2b;
+  --panel2:#0d2134;
+  --line:rgba(99, 145, 186, .22);
+  --line-strong:rgba(67, 170, 244, .4);
+  --text:#d9e8f6;
+  --muted:#7897b5;
+  --blue:#28a8ff;
+  --cyan:#55d9ff;
+  --green:#48df8b;
+  --red:#ff5e57;
+  --amber:#f0bd45;
+  display:grid;
+  grid-template-columns: 258px minmax(700px, 1fr) 420px;
+  gap:0;
+  height:calc(100vh - 58px);
+  min-height:720px;
+  overflow:hidden;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(31, 103, 154, .12), transparent 35%),
+    linear-gradient(180deg, #081523, #06111e);
+  color:var(--text);
+}
+button, a { font:inherit; }
+.debug-sidebar, .debug-rightbar { background:rgba(6, 18, 31, .88); }
+.debug-sidebar { position:relative; overflow:auto; border-right:1px solid var(--line); padding:16px 14px 72px; }
+.debug-main { min-width:0; overflow:auto; padding:16px 12px 22px; }
+.debug-rightbar { overflow:auto; border-left:1px solid var(--line); padding:16px 14px; }
+.side-section + .side-section { margin-top:18px; padding-top:15px; border-top:1px solid rgba(102,147,188,.14); }
+.side-title { margin:0 6px 10px; color:#dbeeff; font-size:13px; font-weight:800; letter-spacing:.03em; }
+.flow-step, .scenario-card { width:100%; border:1px solid transparent; background:transparent; color:var(--text); cursor:pointer; }
+.flow-step { display:grid; grid-template-columns:30px 34px 1fr; align-items:center; min-height:66px; padding:7px 8px; border-radius:9px; text-align:left; position:relative; }
+.flow-step:not(:last-child)::after { content:""; position:absolute; left:22px; top:52px; width:1px; height:28px; border-left:1px dashed rgba(72, 139, 190, .38); }
+.flow-step:hover { background:rgba(46, 139, 202, .08); }
+.flow-step.active { border-color:rgba(47,171,255,.46); background:linear-gradient(90deg, rgba(23,126,198,.2), rgba(18,57,91,.2)); box-shadow:inset 3px 0 #2aa8ff; }
+.step-no { width:22px;height:22px;display:grid;place-items:center;border-radius:50%;border:1px solid rgba(57,164,238,.6);color:#9edcff;background:#102c43;font-size:10px; }
+.step-icon { font-size:22px;color:#b8ddf6; }
+.step-copy { display:grid;gap:2px; }
+.step-copy b { font-size:12px; }
+.step-copy small { color:var(--muted);font-size:9px; }
+.scenario-card { display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;text-align:left;border-color:rgba(105,149,186,.13);background:rgba(255,255,255,.018);margin-bottom:7px; }
+.scenario-card > span { width:26px;color:#b9d6ed;font-size:18px; }
+.scenario-card div { display:grid;gap:2px; }
+.scenario-card b { font-size:11px; }
+.scenario-card small { font-size:8px;color:var(--muted); }
+.scenario-card.active { border-color:#258fd3;background:rgba(17,109,171,.22);box-shadow:0 0 18px rgba(21,132,205,.14); }
+.practice-mark { position:absolute;left:20px;bottom:18px;display:grid;color:#506f8b;letter-spacing:.12em;font-size:9px; }
+.practice-mark span { font-size:7px; }
+.section-tabs { height:44px;display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line);border-radius:8px;background:rgba(8,24,39,.72);margin-bottom:12px;overflow:hidden; }
+.section-tabs button { position:relative;border:0;border-right:1px solid rgba(90,140,180,.18);background:transparent;color:#8ca8c0;cursor:pointer;font-size:11px; }
+.section-tabs button.active { color:#43c1ff;background:linear-gradient(180deg,rgba(17,93,145,.1),rgba(17,93,145,.04)); }
+.section-tabs button.active::after { content:"";position:absolute;left:14%;right:14%;bottom:0;height:2px;background:#26b2ff;box-shadow:0 0 8px #26b2ff; }
+.power-layout { display:grid;grid-template-columns:minmax(520px,1.8fr) minmax(260px,.82fr);gap:12px; }
+.surface { border:1px solid var(--line);border-radius:9px;background:linear-gradient(180deg,rgba(12,31,49,.94),rgba(8,24,39,.94));box-shadow:0 12px 30px rgba(0,0,0,.12); }
+.surface-heading { height:42px;display:flex;align-items:center;justify-content:space-between;padding:0 13px;border-bottom:1px solid rgba(91,139,178,.16); }
+.surface-heading > div { display:flex;align-items:center;gap:8px; }
+.surface-heading b { font-size:12px; }
+.heading-icon { color:#35b9ff;font-size:15px; }
+.heading-note { color:#6686a2;font-size:8px; }
+.scene-surface { min-width:0;overflow:hidden; }
+.scene-and-controls { height:470px;display:grid;grid-template-columns:minmax(0,1fr) 126px;gap:8px;padding:8px; }
+.motor-test-stack { display:flex;flex-direction:column;gap:9px;padding-top:58px; }
+.motor-test, .stop-all { min-height:43px;border-radius:6px;border:1px solid rgba(92,145,185,.32);background:linear-gradient(180deg,#102a41,#0b1c2c);color:#bad5e9;cursor:pointer;font-size:10px; }
+.motor-test:hover,.motor-test.active { border-color:#2dabff;background:linear-gradient(180deg,#1789d0,#116aa5);color:white;box-shadow:0 0 16px rgba(36,161,239,.25); }
+.stop-all { margin-top:3px;border-color:rgba(255,88,82,.52);color:#ff807a;background:rgba(118,35,34,.16); }
+.parameter-surface { padding-bottom:10px; }
+.metric-grid { display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px; }
+.metric-card { min-height:87px;display:grid;grid-template-columns:30px 1fr;grid-template-rows:1fr 1fr;align-items:center;padding:10px;border:1px solid rgba(91,141,180,.16);border-radius:8px;background:rgba(8,27,44,.78); }
+.metric-card > span { grid-row:1/3;color:#3bb6ff;font-size:20px; }
+.metric-card small { color:#7493ae;font-size:9px;align-self:end; }
+.metric-card b { color:#d9efff;font-size:13px;align-self:start; }
+.metric-card.good b,.metric-card.good > span { color:var(--green); }
+.safety-tip { margin:3px 12px 2px;padding:8px 9px;border:1px solid rgba(87,142,184,.15);border-radius:6px;color:#6f8eaa;font-size:8px;background:rgba(7,22,36,.72); }
+.lower-grid { display:grid;grid-template-columns:.92fr 1fr;gap:12px;margin-top:12px; }
+.actuator-list { padding:12px;display:grid;gap:14px; }
+.actuator-row { display:grid;grid-template-columns:28px 38px 1fr 42px;gap:8px;align-items:center;font-size:10px; }
+.actuator-row > span { color:#7592ac; }
+.actuator-row strong { font-size:11px;text-align:right; }
+.output-bar { height:11px;border-radius:999px;background:#1a3249;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(93,142,180,.08); }
+.output-bar i { display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#177ee8,#37c4ff);box-shadow:0 0 10px rgba(44,176,255,.28);transition:width .12s linear; }
+.mapping-surface { overflow:hidden; }
+table { width:calc(100% - 24px);margin:10px 12px 8px;border-collapse:collapse;font-size:9px;text-align:center; }
+th,td { padding:7px 5px;border:1px solid rgba(82,132,172,.17); }
+th { color:#7f9bb4;font-weight:600;background:rgba(12,35,54,.6); }
+td:first-child { color:#45baff;font-weight:800; }
+.response-fault { color:#ff7a72!important; }.response-ok { color:#55df91!important; }
+.fault-banner,.pass-banner { margin:8px 12px 12px;min-height:47px;display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:7px;font-size:9px; }
+.fault-banner { border:1px solid rgba(255,80,71,.46);background:rgba(126,34,31,.22);color:#ff9b96; }
+.fault-banner > span { width:23px;height:23px;display:grid;place-items:center;border-radius:50%;background:#c4423c;color:white;font-weight:900; }
+.fault-banner div { display:grid;gap:2px;flex:1; }.fault-banner small { color:#b87f7c; }
+.fault-banner button { border:1px solid rgba(255,126,117,.5);border-radius:5px;background:rgba(145,48,43,.35);color:#ffd0cc;padding:6px 9px;cursor:pointer;font-size:8px; }
+.pass-banner { border:1px solid rgba(66,215,134,.3);background:rgba(35,124,78,.15);color:#70e5a2; }
+.module-placeholder { min-height:550px;display:flex;align-items:center;justify-content:center;gap:28px;padding:50px; }
+.module-icon { width:84px;height:84px;display:grid;place-items:center;border-radius:24px;border:1px solid rgba(44,171,255,.28);background:rgba(21,103,158,.12);color:#5fcaff;font-size:38px; }
+.module-placeholder h2 { margin:0 0 12px;font-size:24px; }.module-placeholder p { max-width:660px;color:#809bb5;line-height:1.7;font-size:12px; }
+.placeholder-actions { display:flex;gap:10px;margin-top:18px; }.placeholder-actions button { border:1px solid var(--line);background:#0c263c;color:#a9c9e1;border-radius:6px;padding:9px 14px;cursor:pointer; }.placeholder-actions .primary-action { border-color:#279ddd;background:#126da6;color:white; }
+.debug-rightbar { display:flex;flex-direction:column;gap:10px; }
+.status-grid { display:grid;grid-template-columns:1fr 1fr;gap:7px;padding:10px; }
+.status-grid > div { display:flex;justify-content:space-between;align-items:center;min-height:36px;padding:0 9px;border:1px solid rgba(86,137,177,.14);border-radius:6px;background:rgba(7,25,40,.62);font-size:9px; }
+.status-grid span { color:#7995ad; }.status-grid b { color:#dbeeff;font-size:10px; }.status-grid .ok { color:#54e492; }.status-grid .bad { color:#ff746e; }.status-grid .warn { color:#efba51; }.status-grid .standby { color:#f1c457;background:rgba(133,97,23,.22);padding:2px 5px;border-radius:4px; }
+.prearm-alert { margin:0 10px 10px;display:flex;gap:10px;align-items:center;padding:9px;border:1px solid rgba(255,83,74,.48);border-radius:6px;background:rgba(128,31,29,.22); }
+.prearm-alert > span { width:23px;height:23px;display:grid;place-items:center;border-radius:50%;background:#ef4b43;color:white;font-weight:900; }.prearm-alert div { display:grid;gap:2px; }.prearm-alert b { color:#ff766e;font-size:10px; }.prearm-alert small { color:#a87976;font-size:8px; }
+.bridge-surface { padding:5px 10px; }
+.bridge-error { margin:7px 0 4px;padding:7px 8px;border:1px solid rgba(255,102,91,.3);border-radius:6px;background:rgba(119,38,34,.18);color:#ff9c95;font-size:8px;line-height:1.45; }
+.bridge-controls { display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:7px 0 8px;border-top:1px solid rgba(89,138,178,.12); }
+.bridge-controls button,.param-actions button { min-height:30px;border:1px solid rgba(66,158,219,.32);border-radius:5px;background:#0e2b43;color:#a9d7f3;font-size:8px;cursor:pointer; }
+.bridge-controls button:hover:not(:disabled),.param-actions button:hover:not(:disabled){border-color:#2aaeff;background:#124a70;color:white}.bridge-controls button:disabled,.param-actions button:disabled{opacity:.38;cursor:not-allowed}
+.param-tool { padding:8px 0;border-top:1px solid rgba(89,138,178,.12); }
+.param-row { display:grid;grid-template-columns:1.45fr .7fr;gap:6px; }
+.param-row input { min-width:0;height:31px;border:1px solid rgba(91,141,180,.24);border-radius:5px;background:#071a2a;color:#d6eaff;padding:0 8px;font-size:8px;outline:none; }
+.param-row input:focus { border-color:#2caef7;box-shadow:0 0 0 2px rgba(44,174,247,.08); }
+.param-actions { display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px; }
+.param-tool > small { display:block;margin-top:6px;color:#86a8c4;font-size:7px;line-height:1.4;word-break:break-all; }
+.bridge-row.secondary { opacity:.65; }
+
+.bridge-row { display:grid;grid-template-columns:12px 1fr auto;align-items:center;gap:8px;padding:8px 2px; }.bridge-row + .bridge-row { border-top:1px solid rgba(89,138,178,.12); }.bridge-row .dot { width:7px;height:7px;border-radius:50%; }.dot.online { background:#43df84;box-shadow:0 0 10px #43df84; }.dot.demo { background:#e6b64d;box-shadow:0 0 8px rgba(230,182,77,.4); }.bridge-row div { display:grid;gap:1px; }.bridge-row b { font-size:9px; }.bridge-row small { color:#6e8da9;font-size:7px; }.bridge-row strong { color:#87a4bc;font-size:8px; }
+.log-surface { flex:1;min-height:270px; }.clear-log { border:0;background:transparent;color:#6686a1;font-size:7px;cursor:pointer; }
+.timeline { padding:8px 10px 12px;max-height:330px;overflow:auto; }.log-item { position:relative;display:grid;grid-template-columns:58px 1fr;gap:7px;padding:7px 3px 7px 18px;border-left:1px solid rgba(57,132,185,.34);margin-left:4px; }.timeline-dot { position:absolute;left:-4px;top:14px;width:7px;height:7px;border-radius:50%;background:#268ddd;box-shadow:0 0 8px rgba(38,141,221,.5); }.log-item.error .timeline-dot { background:#ff4f48; }.log-item.success .timeline-dot { background:#46d985; }.log-item.warn .timeline-dot { background:#ecb84f; }.log-item time { color:#809cb4;font-size:8px; }.log-item div { display:grid;gap:2px; }.log-item b { font-size:9px; }.log-item small { color:#6e8ba4;font-size:7px;line-height:1.4; }.empty-log { color:#597892;text-align:center;padding:30px 0;font-size:9px; }
+.score-surface { display:grid;grid-template-columns:40px 112px 1fr;align-items:center;padding:12px; }.trophy { color:#f3c443;font-size:27px; }.score-surface > div { display:grid; }.score-surface small { color:#8aa4bb;font-size:8px; }.score-surface b { font-size:28px;color:#ffd163;line-height:1; }.score-surface b em { font-size:12px;color:#92aabe;font-style:normal;margin-left:3px; }.remaining { padding-left:12px;border-left:1px solid rgba(94,141,178,.18); }.remaining span { color:#7894ad;font-size:8px; }.remaining b { color:#94aec4;font-size:9px;line-height:1.4;margin-top:3px; }
+.right-actions { display:grid;grid-template-columns:1fr 1fr;gap:8px; }.right-actions button,.flight-action { min-height:42px;display:grid;place-items:center;border-radius:6px;text-decoration:none;cursor:pointer;font-size:9px; }.right-actions button { border:1px solid rgba(110,155,193,.5);background:#10263a;color:#b7d2e8; }.flight-action { border:1px solid #2baeff;background:linear-gradient(180deg,#159eea,#0871b8);color:white;box-shadow:0 0 18px rgba(35,164,241,.17); }
+@media(max-width:1450px){ .debug-page{grid-template-columns:220px minmax(620px,1fr) 350px}.scene-and-controls{grid-template-columns:minmax(0,1fr) 108px}.metric-grid{gap:7px;padding:9px}.debug-rightbar{padding:12px 9px}.debug-sidebar{padding-left:9px;padding-right:9px} }
+@media(max-width:1180px){ .debug-page{grid-template-columns:190px minmax(590px,1fr)}.debug-rightbar{display:none}.power-layout{grid-template-columns:1fr}.parameter-surface{display:none}.lower-grid{grid-template-columns:1fr}.debug-sidebar{font-size:90%} }
 </style>

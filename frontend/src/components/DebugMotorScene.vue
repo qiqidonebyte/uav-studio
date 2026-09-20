@@ -24,9 +24,9 @@
     </div>
 
     <div class="scene-caption">
-      <span>真实飞机数据：</span>
-      <b>{{ aircraft?.name || '当前飞机' }}</b>
-      <em>· 电机测试由现有 Three.js 旋翼动画驱动</em>
+      <span>调试数据源：</span>
+      <b>{{ live ? 'PX4 SIH / MAVLink' : '教学模拟' }}</b>
+      <em>· {{ aircraft?.name || '当前飞机' }}</em>
     </div>
   </div>
 </template>
@@ -44,6 +44,7 @@ withDefaults(defineProps<{
   commandedMotor?: MotorName | null
   actualMotor?: MotorName | null
   faultMotor?: MotorName | null
+  live?: boolean
 }>(), {
   aircraft: null,
   components: () => [],
@@ -51,6 +52,7 @@ withDefaults(defineProps<{
   commandedMotor: null,
   actualMotor: null,
   faultMotor: null,
+  live: false,
 })
 
 const motors: Array<{ name: MotorName; position: string }> = [
