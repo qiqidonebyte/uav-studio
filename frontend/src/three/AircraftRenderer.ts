@@ -8,21 +8,27 @@ import type {
   Vector3Value,
 } from '../types/aircraft'
 import type { AssemblySlot } from '../utils/assembly'
-import { isSlotInstalled } from '../utils/assembly'
-import { motorPositionsToThree, simulationVectorToThree } from './coordinates'
+import { simulationVectorToThree } from './coordinates'
 import {
   assetForComponent,
   assetUrl,
   MOTOR_DIRECTIONS,
   propellerAssetUrl,
-  propellerOffsetY,
 } from './assetRegistry'
 import { loadModel } from './modelLoader'
 import {
-  explodedPosition,
   explosionOffsetForPart,
   type PlainVector3,
 } from './explodedView'
+import { composeAssemblyPosition } from './assemblyTransforms'
+import {
+  buildMountPoints,
+  componentById,
+  componentIdAtMount,
+  isMountInstalled,
+  selectedComponentId,
+  type MountPoint,
+} from './assemblySemantics'
 
 interface MaterialSnapshot {
   opacity: number
@@ -34,6 +40,7 @@ interface MaterialSnapshot {
 }
 
 interface PartRecord {
+  mountId: string
   slot: AssemblySlot
   object: THREE.Object3D
   meshes: THREE.Mesh[]
@@ -44,6 +51,7 @@ interface PartRecord {
   motorName?: MotorName
   basePosition: THREE.Vector3
   explosionOffset: THREE.Vector3
+  installOffset: THREE.Vector3
 }
 
 export interface VisualBoundsSnapshot {
@@ -60,6 +68,7 @@ export interface LoadedAssetSnapshot {
 }
 
 export interface ExplodedPartSnapshot {
+  mountId: string
   slot: AssemblySlot
   componentId: number | null
   motorName?: MotorName
@@ -69,49 +78,8 @@ export interface ExplodedPartSnapshot {
   offset: PlainVector3
 }
 
-const SLOT_FIELD: Record<AssemblySlot, keyof AircraftDefinition> = {
-  frame: 'frame_id',
-  motor: 'motor_id',
-  esc: 'esc_id',
-  propeller: 'propeller_id',
-  battery: 'battery_id',
-  power_module: 'power_module_id',
-  flight_controller: 'flight_controller_id',
-  gnss: 'gnss_id',
-  payload: 'payload_id',
-}
-
-function componentById(
-  components: Component[],
-  id: number | null | undefined,
-): Component | null {
-  if (!id) return null
-  return components.find(component => component.id === id) ?? null
-}
-
-function componentForSlot(
-  aircraft: AircraftDefinition | null | undefined,
-  components: Component[],
-  slot: AssemblySlot,
-): Component | null {
-  if (!aircraft) return null
-  const id = aircraft[SLOT_FIELD[slot]]
-  return typeof id === 'number' ? componentById(components, id) : null
-}
-
-function parameterVector(
-  component: Component | null,
-  key: string,
-): THREE.Vector3 | null {
-  const raw = component?.parameters_json[key]
-  if (!raw || typeof raw !== 'object') return null
-  const value = raw as Record<string, unknown>
-  if (
-    typeof value.x !== 'number' ||
-    typeof value.y !== 'number' ||
-    typeof value.z !== 'number'
-  ) return null
-  return simulationVectorToThree({ x: value.x, y: value.y, z: value.z })
+export interface PartInstanceSnapshot extends ExplodedPartSnapshot {
+  installProgress: number
 }
 
 function materialSnapshot(material: THREE.Material): MaterialSnapshot {
@@ -131,6 +99,8 @@ function applyMaterialState(
   installed: boolean,
   selected: boolean,
   issue: boolean,
+  pending: boolean,
+  hovered: boolean,
 ): void {
   const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
   materials.forEach(material => {
@@ -141,21 +111,45 @@ function applyMaterialState(
 
     const standard = material as THREE.MeshStandardMaterial
     material.transparent = !installed || base.transparent
-    material.opacity = installed ? base.opacity : selected ? 0.34 : 0.14
+    material.opacity = installed
+      ? base.opacity
+      : hovered
+        ? 0.42
+        : pending
+          ? 0.16
+          : selected
+            ? 0.28
+            : 0.08
     material.depthWrite = installed
 
     if (standard.color) {
-      standard.color.setHex(installed ? (base.color ?? 0xffffff) : 0x9aa8b7)
+      standard.color.setHex(
+        installed
+          ? (base.color ?? 0xffffff)
+          : hovered
+            ? 0x69c6ff
+            : pending
+              ? 0x91bde8
+              : 0xa6b5c7,
+      )
     }
     if (standard.emissive) {
       standard.emissive.setHex(
-        issue ? 0xb42318 : selected ? 0x2563eb : (base.emissive ?? 0x000000),
+        issue
+          ? 0xb42318
+          : hovered
+            ? 0x0787d1
+            : selected
+              ? 0x2563eb
+              : (base.emissive ?? 0x000000),
       )
       standard.emissiveIntensity = issue
-        ? 0.7
-        : selected
-          ? 0.75
-          : (base.emissiveIntensity ?? 1)
+        ? 0.78
+        : hovered
+          ? 0.95
+          : selected
+            ? 0.88
+            : (base.emissiveIntensity ?? 1)
     }
     material.needsUpdate = true
   })
@@ -182,27 +176,44 @@ function dimensionsForObjects(objects: THREE.Object3D[]): VisualBoundsSnapshot {
   return { width: size.x, height: size.y, depth: size.z }
 }
 
-function simulationMotorMounts(diagonal: number): Record<MotorName, Vector3Value> {
-  const offset = diagonal / 2 / Math.sqrt(2)
-  return {
-    M1: { x: offset, y: offset, z: 0 },
-    M2: { x: offset, y: -offset, z: 0 },
-    M3: { x: -offset, y: -offset, z: 0 },
-    M4: { x: -offset, y: offset, z: 0 },
-  }
-}
-
 function vectorSnapshot(value: THREE.Vector3): PlainVector3 {
   return { x: value.x, y: value.y, z: value.z }
+}
+
+function mountFor(
+  mounts: MountPoint[],
+  id: string,
+): MountPoint {
+  const mount = mounts.find(item => item.id === id)
+  if (!mount) throw new Error(`Assembly mount missing: ${id}`)
+  return mount
+}
+
+function mountComponent(
+  aircraft: AircraftDefinition | null | undefined,
+  components: Component[],
+  mount: MountPoint,
+): Component | null {
+  const mountedId = componentIdAtMount(aircraft, mount)
+  const selectedId = aircraft
+    ? selectedComponentId(aircraft, mount.slot)
+    : null
+  return componentById(components, mountedId ?? selectedId)
 }
 
 export class AircraftRenderer {
   readonly root = new THREE.Group()
   private parts: PartRecord[] = []
-  private rotorGroups: Array<{ group: THREE.Object3D; sign: number }> = []
+  private rotorGroups: Array<{ group: THREE.Object3D; sign: number; mountId: string }> = []
   private generation = 0
   private explodedProgress = 0
-  private lastMotorMounts: Record<MotorName, Vector3Value> = simulationMotorMounts(0.65)
+  private installationProgress = new Map<string, number>()
+  private lastMotorMounts: Record<MotorName, Vector3Value> = {
+    M1: { x: 0.23, y: 0.23, z: 0.066 },
+    M2: { x: 0.23, y: -0.23, z: 0.066 },
+    M3: { x: -0.23, y: -0.23, z: 0.066 },
+    M4: { x: -0.23, y: 0.23, z: 0.066 },
+  }
 
   constructor() {
     this.root.name = 'uav-aircraft-root'
@@ -238,42 +249,62 @@ export class AircraftRenderer {
   }
 
   private register(
-    slot: AssemblySlot,
+    mount: MountPoint,
     object: THREE.Object3D,
     installed: boolean,
     componentId: number | null,
     url: string,
     direction?: 'CW' | 'CCW',
-    motorName?: MotorName,
   ): void {
     const meshes: THREE.Mesh[] = []
     object.traverse(child => {
       const mesh = child as THREE.Mesh
       if (!mesh.isMesh) return
-      mesh.userData.slot = slot
+      mesh.userData.slot = mount.slot
+      mesh.userData.mountId = mount.id
       meshes.push(mesh)
     })
 
     const basePosition = object.position.clone()
-    const explosionOffset = this.explosionOffset(slot, object, motorName)
+    const explosionOffset = this.explosionOffset(
+      mount.slot,
+      object,
+      mount.motorName,
+    )
+    const installOffset = simulationVectorToThree(mount.install_offset)
     this.parts.push({
-      slot,
+      mountId: mount.id,
+      slot: mount.slot,
       object,
       meshes,
       installed,
       componentId,
       url,
       direction,
-      motorName,
+      motorName: mount.motorName,
       basePosition,
       explosionOffset,
+      installOffset,
     })
+    if (!installed || !this.installationProgress.has(mount.id)) {
+      this.installationProgress.set(mount.id, 1)
+    }
     this.root.add(object)
   }
 
-  private frameDiagonal(frame: Component | null): number {
-    const raw = frame?.parameters_json.motor_diagonal_m
-    return typeof raw === 'number' && raw > 0 ? raw : 0.65
+  private applyTransforms(): void {
+    this.parts.forEach(part => {
+      const installProgress = this.installationProgress.get(part.mountId) ?? 1
+      const next = composeAssemblyPosition(
+        vectorSnapshot(part.basePosition),
+        vectorSnapshot(part.explosionOffset),
+        this.explodedProgress,
+        vectorSnapshot(part.installOffset),
+        installProgress,
+      )
+      part.object.position.set(next.x, next.y, next.z)
+    })
+    this.root.updateMatrixWorld(true)
   }
 
   async rebuild(
@@ -287,133 +318,105 @@ export class AircraftRenderer {
     const explodedProgress = this.explodedProgress
     this.clearParts()
 
-    const frame = componentForSlot(aircraft, components, 'frame')
-    const motor = componentForSlot(aircraft, components, 'motor')
-    const esc = componentForSlot(aircraft, components, 'esc')
-    const propeller = componentForSlot(aircraft, components, 'propeller')
-    const battery = componentForSlot(aircraft, components, 'battery')
-    const power = componentForSlot(aircraft, components, 'power_module')
-    const flightController = componentForSlot(aircraft, components, 'flight_controller')
-    const gnss = componentForSlot(aircraft, components, 'gnss')
-    const payload = componentForSlot(aircraft, components, 'payload')
-
-    const diagonal = this.frameDiagonal(frame)
-    const frameScale = diagonal / 0.65
-    const mountY = 0.066 * frameScale
-    const motorPositions = motorPositionsToThree(diagonal)
-    this.lastMotorMounts = simulationMotorMounts(diagonal)
-
-    const frameVisual = assetForComponent(frame, 'frame')
-    const frameUrl = assetUrl(frameVisual)
-    const frameObject = await this.loadRequired(frameUrl)
-    if (generation !== this.generation) return
-    applyVisualScale(frameObject, frameVisual)
-    this.register('frame', frameObject, Boolean(frame), frame?.id ?? null, frameUrl)
-
-    const motorVisual = assetForComponent(motor, 'motor')
-    const motorUrl = assetUrl(motorVisual)
-    const escVisual = assetForComponent(esc, 'esc')
-    const escUrl = assetUrl(escVisual)
-    const propVisual = assetForComponent(propeller, 'propeller')
-    const propUrls = {
-      CW: propellerAssetUrl(propeller, 'CW'),
-      CCW: propellerAssetUrl(propeller, 'CCW'),
+    const mounts = buildMountPoints(aircraft, components)
+    for (const name of ['M1', 'M2', 'M3', 'M4'] as MotorName[]) {
+      this.lastMotorMounts[name] = {
+        ...mountFor(mounts, `motor:${name}`).position,
+      }
     }
 
-    const motorPrototype = await this.loadRequired(motorUrl)
-    const escPrototype = await this.loadRequired(escUrl)
-    const propPrototypeCW = await this.loadRequired(propUrls.CW)
-    const propPrototypeCCW = await this.loadRequired(propUrls.CCW)
-    if (generation !== this.generation) return
-    applyVisualScale(motorPrototype, motorVisual)
-    applyVisualScale(escPrototype, escVisual)
-    applyVisualScale(propPrototypeCW, propVisual)
-    applyVisualScale(propPrototypeCCW, propVisual)
-
-    ;(['M1', 'M2', 'M3', 'M4'] as MotorName[]).forEach((name, index) => {
-      const p = motorPositions[name].clone()
-      p.y = mountY
-
-      const motorObject = index === 0 ? motorPrototype : motorPrototype.clone(true)
-      motorObject.position.copy(p)
-      this.register(
-        'motor',
-        motorObject,
-        Boolean(motor),
-        motor?.id ?? null,
-        motorUrl,
-        undefined,
-        name,
-      )
-
-      const escObject = index === 0 ? escPrototype : escPrototype.clone(true)
-      escObject.position.copy(p.clone().multiplyScalar(0.64))
-      escObject.position.y = mountY * 0.58
-      escObject.rotation.y = Math.atan2(-p.z, p.x)
-      this.register(
-        'esc',
-        escObject,
-        Boolean(esc),
-        esc?.id ?? null,
-        escUrl,
-        undefined,
-        name,
-      )
-
-      const direction =
-        aircraft?.propeller_directions?.[name] ?? MOTOR_DIRECTIONS[name]
-      const source = direction === 'CW' ? propPrototypeCW : propPrototypeCCW
-      const propObject = source.clone(true)
-      propObject.position.copy(p).add(new THREE.Vector3(0, propellerOffsetY(motor), 0))
-      const propUrl = direction === 'CW' ? propUrls.CW : propUrls.CCW
-      this.register(
-        'propeller',
-        propObject,
-        Boolean(propeller),
-        propeller?.id ?? null,
-        propUrl,
-        direction,
-        name,
-      )
-      this.rotorGroups.push({ group: propObject, sign: direction === 'CW' ? -1 : 1 })
-    })
-
-    const frameForPositions = frame ?? componentById(components, aircraft?.frame_id)
-    const batteryPosition = parameterVector(frameForPositions, 'battery_position_m')
-      ?? new THREE.Vector3(-0.03, -0.10, 0)
-    const powerPosition = parameterVector(frameForPositions, 'power_module_position_m')
-      ?? new THREE.Vector3(0, 0.02, 0)
-    const fcPosition = parameterVector(frameForPositions, 'flight_controller_position_m')
-      ?? new THREE.Vector3(0, 0.05, 0)
-    const gnssPosition = aircraft?.gnss_position_m
-      ? simulationVectorToThree(aircraft.gnss_position_m)
-      : parameterVector(frameForPositions, 'gnss_mount_position_m')
-        ?? new THREE.Vector3(-0.16, 0.08, 0)
-    const payloadPosition = aircraft?.payload_position_m
-      ? simulationVectorToThree(aircraft.payload_position_m)
-      : new THREE.Vector3(0.08, -0.12, 0)
-
-    const singles: Array<[AssemblySlot, Component | null, THREE.Vector3]> = [
-      ['battery', battery, batteryPosition],
-      ['power_module', power, powerPosition],
-      ['flight_controller', flightController, fcPosition],
-      ['gnss', gnss, gnssPosition],
-      ['payload', payload, payloadPosition],
-    ]
-
-    for (const [slot, component, position] of singles) {
-      const type = slot as ComponentType
-      const visual = assetForComponent(component, type)
+    // Frame datum
+    {
+      const mount = mountFor(mounts, 'frame:main')
+      const component = mountComponent(aircraft, components, mount)
+      const visual = assetForComponent(component, 'frame')
       const url = assetUrl(visual)
       const object = await this.loadRequired(url)
       if (generation !== this.generation) return
       applyVisualScale(object, visual)
-      object.position.copy(position)
-      this.register(slot, object, Boolean(component), component?.id ?? null, url)
+      object.position.copy(simulationVectorToThree(mount.position))
+      this.register(
+        mount,
+        object,
+        isMountInstalled(aircraft, mount.id),
+        component?.id ?? null,
+        url,
+      )
     }
 
-    if (gnss || !aircraft || !isSlotInstalled(aircraft, 'gnss')) {
-      const mastHeight = Math.max(0.08, gnssPosition.y - mountY)
+    // Repeated propulsion instances are now true mount-scoped objects.
+    for (const name of ['M1', 'M2', 'M3', 'M4'] as MotorName[]) {
+      for (const slot of ['motor', 'esc', 'propeller'] as const) {
+        const mount = mountFor(mounts, `${slot}:${name}`)
+        const component = mountComponent(aircraft, components, mount)
+        const visual = assetForComponent(component, slot)
+        const direction = slot === 'propeller'
+          ? (aircraft?.propeller_directions?.[name] ?? MOTOR_DIRECTIONS[name])
+          : undefined
+        const url = slot === 'propeller'
+          ? propellerAssetUrl(component, direction!)
+          : assetUrl(visual)
+        const object = await this.loadRequired(url)
+        if (generation !== this.generation) return
+        applyVisualScale(object, visual)
+        object.position.copy(simulationVectorToThree(mount.position))
+
+        if (slot === 'esc') {
+          const p = object.position
+          object.rotation.y = Math.atan2(-p.z, p.x)
+        }
+
+        this.register(
+          mount,
+          object,
+          isMountInstalled(aircraft, mount.id),
+          component?.id ?? null,
+          url,
+          direction,
+        )
+        if (slot === 'propeller') {
+          this.rotorGroups.push({
+            group: object,
+            sign: direction === 'CW' ? -1 : 1,
+            mountId: mount.id,
+          })
+        }
+      }
+    }
+
+    // Single-instance avionics / power / payload mounts.
+    for (const slot of [
+      'battery',
+      'power_module',
+      'flight_controller',
+      'gnss',
+      'payload',
+    ] as ComponentType[]) {
+      const mount = mountFor(mounts, `${slot}:main`)
+      const component = mountComponent(aircraft, components, mount)
+      const visual = assetForComponent(component, slot)
+      const url = assetUrl(visual)
+      const object = await this.loadRequired(url)
+      if (generation !== this.generation) return
+      applyVisualScale(object, visual)
+      object.position.copy(simulationVectorToThree(mount.position))
+      this.register(
+        mount,
+        object,
+        isMountInstalled(aircraft, mount.id),
+        component?.id ?? null,
+        url,
+      )
+    }
+
+    // GNSS mast is a structural teaching cue, not a catalog component.
+    const gnssMount = mountFor(mounts, 'gnss:main')
+    const gnssThree = simulationVectorToThree(gnssMount.position)
+    const motorHeight = simulationVectorToThree(
+      mountFor(mounts, 'motor:M1').position,
+    ).y
+    if (aircraft?.gnss_id || !aircraft) {
+      const mastHeight = Math.max(0.08, gnssThree.y - motorHeight)
       const mast = new THREE.Mesh(
         new THREE.CylinderGeometry(0.0035, 0.0035, mastHeight, 14),
         new THREE.MeshStandardMaterial({
@@ -422,33 +425,21 @@ export class AircraftRenderer {
           roughness: 0.55,
         }),
       )
-      mast.position.set(
-        gnssPosition.x,
-        gnssPosition.y - mastHeight / 2,
-        gnssPosition.z,
-      )
+      // Make the mast a child of the GNSS part so install/explode transforms
+      // remain unified instead of leaving the support behind in world space.
+      mast.position.set(0, -mastHeight / 2, 0)
       mast.castShadow = true
       mast.userData.slot = 'gnss'
-      const basePosition = mast.position.clone()
-      const explosionOffset = this.explosionOffset('gnss', mast)
-      this.root.add(mast)
-      this.parts.push({
-        slot: 'gnss',
-        object: mast,
-        meshes: [mast],
-        installed: Boolean(gnss),
-        componentId: null,
-        url: 'procedural:gnss-mast',
-        basePosition,
-        explosionOffset,
-      })
+      mast.userData.mountId = 'gnss:main'
+      const gnssPart = this.parts.find(item => item.mountId === 'gnss:main')
+      gnssPart?.object.add(mast)
     }
 
     this.root.position.copy(oldPosition)
     this.root.rotation.copy(oldRotation)
     this.root.scale.copy(oldScale)
     this.explodedProgress = explodedProgress
-    this.setExplodedProgress(explodedProgress)
+    this.applyTransforms()
     this.applyAssemblyState(aircraft, null)
   }
 
@@ -457,28 +448,47 @@ export class AircraftRenderer {
     selectedSlot: AssemblySlot | null,
     issueSlots: AssemblySlot[] = [],
     issueMounts: MotorName[] = [],
+    selectedMountId: string | null = null,
+    issueMountIds: string[] = [],
+    pendingSlot: AssemblySlot | null = null,
+    hoveredMountId: string | null = null,
   ): void {
     this.parts.forEach(part => {
-      const installed = aircraft ? isSlotInstalled(aircraft, part.slot) : part.installed
-      const selected = selectedSlot === part.slot
-      const issue = issueSlots.includes(part.slot)
+      const installed = isMountInstalled(aircraft, part.mountId)
+      part.installed = installed
+      const pending = !installed && pendingSlot === part.slot
+      const hovered = pending && hoveredMountId === part.mountId
+      const selected = hovered || (
+        selectedMountId
+          ? selectedMountId === part.mountId
+          : selectedSlot === part.slot
+      )
+      const issue = issueMountIds.includes(part.mountId)
+        || issueSlots.includes(part.slot)
         || Boolean(part.motorName && issueMounts.includes(part.motorName))
-      part.meshes.forEach(mesh => applyMaterialState(mesh, installed, selected, issue))
-      part.object.visible = true
+      part.meshes.forEach(mesh =>
+        applyMaterialState(mesh, installed, selected, issue, pending, hovered),
+      )
+      // Empty slots stay out of the way unless they are currently relevant.
+      part.object.visible = installed || pending || selected || issue
     })
   }
 
   setExplodedProgress(progress: number): void {
     this.explodedProgress = Math.max(0, Math.min(1, progress))
-    this.parts.forEach(part => {
-      const next = explodedPosition(
-        vectorSnapshot(part.basePosition),
-        vectorSnapshot(part.explosionOffset),
-        this.explodedProgress,
-      )
-      part.object.position.set(next.x, next.y, next.z)
-    })
-    this.root.updateMatrixWorld(true)
+    this.applyTransforms()
+  }
+
+  setInstallationProgress(mountId: string, progress: number): void {
+    this.installationProgress.set(
+      mountId,
+      Math.max(0, Math.min(1, progress)),
+    )
+    this.applyTransforms()
+  }
+
+  installationProgressSnapshot(mountId: string): number {
+    return this.installationProgress.get(mountId) ?? 1
   }
 
   explodedProgressSnapshot(): number {
@@ -486,17 +496,30 @@ export class AircraftRenderer {
   }
 
   explodedPartsSnapshot(): ExplodedPartSnapshot[] {
-    return this.parts
-      .filter(part => !part.url.startsWith('procedural:'))
-      .map(part => ({
-        slot: part.slot,
-        componentId: part.componentId,
-        ...(part.motorName ? { motorName: part.motorName } : {}),
-        installed: part.installed,
-        basePosition: vectorSnapshot(part.basePosition),
-        currentPosition: vectorSnapshot(part.object.position),
-        offset: vectorSnapshot(part.explosionOffset),
-      }))
+    return this.parts.map(part => ({
+      mountId: part.mountId,
+      slot: part.slot,
+      componentId: part.componentId,
+      ...(part.motorName ? { motorName: part.motorName } : {}),
+      installed: part.installed,
+      basePosition: vectorSnapshot(part.basePosition),
+      currentPosition: vectorSnapshot(part.object.position),
+      offset: vectorSnapshot(part.explosionOffset),
+    }))
+  }
+
+  partInstancesSnapshot(): PartInstanceSnapshot[] {
+    return this.parts.map(part => ({
+      mountId: part.mountId,
+      slot: part.slot,
+      componentId: part.componentId,
+      ...(part.motorName ? { motorName: part.motorName } : {}),
+      installed: part.installed,
+      basePosition: vectorSnapshot(part.basePosition),
+      currentPosition: vectorSnapshot(part.object.position),
+      offset: vectorSnapshot(part.explosionOffset),
+      installProgress: this.installationProgress.get(part.mountId) ?? 1,
+    }))
   }
 
   rotateRotors(outputs: number[] | undefined): void {
@@ -520,11 +543,20 @@ export class AircraftRenderer {
     return null
   }
 
+  mountForObject(object: THREE.Object3D): string | null {
+    let current: THREE.Object3D | null = object
+    while (current) {
+      const mountId = current.userData.mountId as string | undefined
+      if (mountId) return mountId
+      current = current.parent
+    }
+    return null
+  }
+
   loadedAssetsSnapshot(): LoadedAssetSnapshot[] {
     const result: LoadedAssetSnapshot[] = []
     const seen = new Set<string>()
     this.parts.forEach(part => {
-      if (part.url.startsWith('procedural:')) return
       const key = `${part.slot}|${part.componentId}|${part.url}|${part.direction ?? ''}`
       if (seen.has(key)) return
       seen.add(key)
@@ -557,11 +589,16 @@ export class AircraftRenderer {
     const result: Partial<Record<AssemblySlot, VisualBoundsSnapshot>> = {}
     slots.forEach(slot => {
       const objects = this.parts
-        .filter(part => part.slot === slot && !part.url.startsWith('procedural:'))
+        .filter(part => part.slot === slot)
         .map(part => part.object)
       if (objects.length > 0) result[slot] = dimensionsForObjects(objects)
     })
     return result
+  }
+
+  boundsForMount(mountId: string): VisualBoundsSnapshot | null {
+    const part = this.parts.find(item => item.mountId === mountId)
+    return part ? dimensionsForObjects([part.object]) : null
   }
 
   motorMountsSnapshot(): Record<MotorName, Vector3Value> {

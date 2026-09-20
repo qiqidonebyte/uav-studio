@@ -33,6 +33,9 @@ class AircraftRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    updated_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     frame_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     motor_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     esc_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -45,6 +48,7 @@ class AircraftRecord(Base):
     payload_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     gnss_position_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     payload_position_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    assembly_instances_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
 
 class SimulationRecord(Base):

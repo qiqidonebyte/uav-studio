@@ -303,6 +303,26 @@ try {
     }
   })
 
+
+  await run('P0-SCENE-020', 'Digital Assembly 2.0 exposes semantic mount anchors', async () => {
+    const value = requireProbe(await probe(page))
+    assert.equal(value.mountPoints.length, 18)
+    assert.equal(value.mountPoints.filter(item => item.slot === 'motor').length, 4)
+    assert.equal(value.mountPoints.filter(item => item.slot === 'esc').length, 4)
+    assert.equal(value.mountPoints.filter(item => item.slot === 'propeller').length, 4)
+    for (const mountId of ['motor:M1', 'motor:M2', 'motor:M3', 'motor:M4']) {
+      assert.ok(value.mountPoints.some(item => item.id === mountId), `missing ${mountId}`)
+    }
+  })
+
+  await run('P0-SCENE-021', 'reference aircraft exposes independent installed part instances', async () => {
+    const value = requireProbe(await probe(page))
+    assert.equal(value.partInstances.filter(item => item.slot === 'motor' && item.installed).length, 4)
+    assert.equal(value.partInstances.filter(item => item.slot === 'esc' && item.installed).length, 4)
+    assert.equal(value.partInstances.filter(item => item.slot === 'propeller' && item.installed).length, 4)
+    assert.equal(value.pendingInstall, null)
+  })
+
   finish()
 } finally {
   await browser.close()

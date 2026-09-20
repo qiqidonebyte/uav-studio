@@ -44,11 +44,29 @@ def ensure_schema_compatibility(engine: Engine) -> None:
     aircraft_columns = {
         column["name"] for column in inspector.get_columns("aircraft")
     }
+    migrations: list[str] = []
     if "propeller_directions_json" not in aircraft_columns:
+        migrations.append(
+            "ALTER TABLE aircraft ADD COLUMN propeller_directions_json JSON"
+        )
+    if "assembly_instances_json" not in aircraft_columns:
+        migrations.append(
+            "ALTER TABLE aircraft ADD COLUMN assembly_instances_json JSON"
+        )
+    if "description" not in aircraft_columns:
+        migrations.append(
+            "ALTER TABLE aircraft ADD COLUMN description VARCHAR(1000)"
+        )
+    if "created_at" not in aircraft_columns:
+        migrations.append(
+            "ALTER TABLE aircraft ADD COLUMN created_at VARCHAR(64)"
+        )
+    if "updated_at" not in aircraft_columns:
+        migrations.append(
+            "ALTER TABLE aircraft ADD COLUMN updated_at VARCHAR(64)"
+        )
+
+    if migrations:
         with engine.begin() as connection:
-            connection.execute(
-                text(
-                    "ALTER TABLE aircraft "
-                    "ADD COLUMN propeller_directions_json JSON"
-                )
-            )
+            for statement in migrations:
+                connection.execute(text(statement))

@@ -10,6 +10,7 @@
     "e2e:flight": "node tests/e2e-flight.mjs",
     "e2e:flight-controls": "node tests/e2e-flight-controls.mjs",
     "e2e:component-card": "node tests/e2e-component-card-image.mjs",
+    "e2e:digital-assembly": "node tests/e2e-digital-assembly.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:p0:asset": "vitest run tests/p0-asset-contract.test.ts",
@@ -17,7 +18,8 @@
     "test:p0:scene": "node tests/p0-scene-contract.mjs",
     "test:p0:capture": "node tests/p0-visual-capture.mjs",
     "e2e:component-library": "node tests/e2e-component-library.mjs",
-    "e2e:settings": "node tests/e2e-settings.mjs"
+    "e2e:settings": "node tests/e2e-settings.mjs",
+    "e2e:aircraft-library": "node tests/e2e-aircraft-library.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",

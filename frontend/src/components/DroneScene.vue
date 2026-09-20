@@ -13,6 +13,8 @@
         <button
           data-testid="assembly-view-exploded"
           :class="['scene-chip', { active: assemblyViewMode === 'exploded' }]"
+          :disabled="Boolean(pendingInstall)"
+          :title="pendingInstall ? '完成或取消当前 3D 装配后可进入爆炸视图' : ''"
           @click="setAssemblyViewMode('exploded')"
         >
           爆炸视图
@@ -49,6 +51,52 @@
       <span v-if="issueSlots.length > 0">红色高亮为当前工程检查问题</span>
       <span v-else-if="assemblyViewMode === 'exploded'">组件按装配层级展开，可直接点击任意部件查看详情</span>
       <span v-else>{{ selectedSlot ? '蓝色高亮为当前检查部件' : '点击机架、电机、桨、电池等模型查看详情' }}</span>
+    </div>
+
+    <div
+      v-if="assemblyMode && pendingInstall"
+      class="assembly-install-banner"
+      data-testid="assembly-install-banner"
+    >
+      <span class="install-pulse"></span>
+      <div>
+        <b>3D 装配模式 · {{ SLOT_LABELS[pendingInstall.slot] }}</b>
+        <small>选择蓝色安装点，Ghost 组件会自动吸附到真实 Mount Anchor</small>
+      </div>
+    </div>
+
+    <div
+      v-if="assemblyMode && pendingInstall && mountHotspots.length > 0"
+      class="mount-hotspot-layer"
+      data-testid="mount-hotspot-layer"
+    >
+      <button
+        v-for="hotspot in mountHotspots"
+        :key="hotspot.mountId"
+        class="mount-hotspot"
+        :class="{ hovered: hoveredMountId === hotspot.mountId }"
+        :style="{ left: `${hotspot.left}px`, top: `${hotspot.top}px` }"
+        :data-mount-id="hotspot.mountId"
+        :aria-label="`安装到 ${hotspot.label}`"
+        data-testid="assembly-mount-hotspot"
+        @mouseenter="hoverMount(hotspot.mountId)"
+        @mouseleave="leaveMount(hotspot.mountId)"
+        @focus="hoverMount(hotspot.mountId)"
+        @blur="leaveMount(hotspot.mountId)"
+        @click.stop="installMount(hotspot.mountId)"
+      >
+        <span></span>
+        <b>{{ hotspot.shortLabel }}</b>
+      </button>
+    </div>
+
+    <div
+      v-if="assemblyMode && spatialDiagnostics.length > 0"
+      :class="['spatial-diagnostic-pill', { error: hasSpatialError }]"
+      data-testid="spatial-diagnostic-pill"
+    >
+      <b>{{ hasSpatialError ? '空间干涉' : '空间提醒' }}</b>
+      <span>{{ spatialDiagnostics[0].message }}</span>
     </div>
 
     <div
@@ -104,6 +152,17 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import type { AircraftDefinition, AircraftEngineeringSummary, Component, MotorName } from '../types/aircraft'
 import type { TelemetryFrame } from '../types/telemetry'
 import { simulationPoseToThree, simulationVectorToThree } from '../three/coordinates'
+import {
+  batteryBayDimensions,
+  batteryEnvelopeDiagnostic,
+  buildMountPoints,
+  componentById,
+  isMountInstalled,
+  missingMountsForSlot,
+  rotorDiscDiagnostics,
+  type MountPoint,
+  type SpatialDiagnostic,
+} from '../three/assemblySemantics'
 import { AircraftRenderer } from '../three/AircraftRenderer'
 import type { AssemblyViewMode } from '../three/explodedView'
 import { buildExplodedLabelDescriptors } from '../three/explodedLabels'
@@ -121,6 +180,11 @@ const props = withDefaults(
     issueMounts?: MotorName[]
     engineering?: AircraftEngineeringSummary | null
     interactive?: boolean
+    pendingInstall?: { slot: AssemblySlot; componentId: number } | null
+    selectedMountId?: string | null
+    installAnimation?: { mountId: string; serial: number } | null
+    removeAnimation?: { mountId: string; serial: number } | null
+    issueMountIds?: string[]
   }>(),
   {
     telemetry: undefined,
@@ -131,11 +195,19 @@ const props = withDefaults(
     issueMounts: () => [],
     engineering: null,
     interactive: false,
+    pendingInstall: null,
+    selectedMountId: null,
+    installAnimation: null,
+    removeAnimation: null,
+    issueMountIds: () => [],
   },
 )
 
 const emit = defineEmits<{
   (event: 'select-slot', slot: AssemblySlot): void
+  (event: 'select-mount', mountId: string, slot: AssemblySlot): void
+  (event: 'install-at-mount', mountId: string): void
+  (event: 'spatial-diagnostics', diagnostics: SpatialDiagnostic[]): void
 }>()
 
 const host = ref<HTMLDivElement | null>(null)
@@ -156,6 +228,22 @@ type ExplodedComponentLabelView = {
   issue: boolean
 }
 const explodedComponentLabels = ref<ExplodedComponentLabelView[]>([])
+type MountHotspotView = {
+  mountId: string
+  label: string
+  shortLabel: string
+  left: number
+  top: number
+}
+const mountHotspots = ref<MountHotspotView[]>([])
+const hoveredMountId = ref<string | null>(null)
+const spatialDiagnostics = ref<SpatialDiagnostic[]>([])
+const hasSpatialError = computed(
+  () => spatialDiagnostics.value.some(item => item.severity === 'error'),
+)
+const resolvedMountPoints = computed(
+  () => buildMountPoints(props.aircraft, props.components),
+)
 const assemblyMode = computed(() => props.interactive)
 const directionLabelsVisible = computed(
   () =>
@@ -184,6 +272,14 @@ let axesHelper: THREE.AxesHelper
 let keyLight: THREE.DirectionalLight
 let trajectoryPoints: THREE.Vector3[] = []
 let thrustArrows: THREE.ArrowHelper[] = []
+let activeInstallation: {
+  mountId: string
+  progress: number
+  serial: number
+  mode: 'install' | 'remove'
+} | null = null
+let lastInstallationSerial = -1
+let lastRemovalSerial = -1
 let animationId = 0
 let previousAnimationTime = performance.now()
 let lastTelemetryTime = -1
@@ -344,7 +440,100 @@ function buildOverlay(): void {
     0.035,
   )
   overlayGroup.add(nose)
+  buildSpatialOverlay()
   applyAssemblyState()
+}
+
+function buildSpatialOverlay(): void {
+  if (!overlayGroup || !props.aircraft) return
+  const diagnostics = rotorDiscDiagnostics(
+    props.aircraft,
+    props.components,
+    resolvedMountPoints.value,
+  )
+  const hasRotorCollision = diagnostics.some(item => item.code === 'ROTOR_DISC_COLLISION')
+  const propeller = componentById(props.components, props.aircraft.propeller_id)
+  const diameterIn = propeller?.parameters_json.diameter_in
+  if (hasRotorCollision && typeof diameterIn === 'number') {
+    const radius = diameterIn * 0.0254 / 2
+    const installed = new Set(
+      aircraftRenderer
+        .partInstancesSnapshot()
+        .filter(item => item.installed && item.slot === 'propeller')
+        .map(item => item.mountId),
+    )
+    for (const mount of resolvedMountPoints.value.filter(item => item.slot === 'propeller')) {
+      if (!installed.has(mount.id)) continue
+      const disc = new THREE.Mesh(
+        new THREE.CircleGeometry(radius, 64),
+        new THREE.MeshBasicMaterial({
+          color: 0xef4444,
+          transparent: true,
+          opacity: 0.16,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      )
+      disc.geometry.userData.overlayGeometry = true
+      disc.userData.overlayGeometry = true
+      disc.rotation.x = -Math.PI / 2
+      disc.position.copy(simulationVectorToThree(mount.position))
+      disc.position.y -= 0.002
+      overlayGroup.add(disc)
+    }
+  }
+
+  if (props.selectedSlot === 'battery' || spatialDiagnostics.value.some(item => item.code === 'BATTERY_ENVELOPE_EXCEEDED')) {
+    const frame = componentById(props.components, props.aircraft.frame_id)
+    const diagonalRaw = frame?.parameters_json.motor_diagonal_m
+    const diagonal = typeof diagonalRaw === 'number' ? diagonalRaw : 0.65
+    const bay = batteryBayDimensions(diagonal)
+    const mount = resolvedMountPoints.value.find(item => item.id === 'battery:main')
+    if (mount) {
+      const box = new THREE.Mesh(
+        new THREE.BoxGeometry(bay.x, bay.z, bay.y),
+        new THREE.MeshBasicMaterial({
+          color: spatialDiagnostics.value.some(item => item.code === 'BATTERY_ENVELOPE_EXCEEDED')
+            ? 0xf59e0b
+            : 0x3b82f6,
+          wireframe: true,
+          transparent: true,
+          opacity: 0.55,
+        }),
+      )
+      box.geometry.userData.overlayGeometry = true
+      box.userData.overlayGeometry = true
+      box.position.copy(simulationVectorToThree(mount.position))
+      overlayGroup.add(box)
+    }
+  }
+}
+
+function refreshSpatialDiagnostics(): void {
+  if (!aircraftRenderer) return
+  const diagnostics: SpatialDiagnostic[] = [
+    ...rotorDiscDiagnostics(
+      props.aircraft,
+      props.components,
+      resolvedMountPoints.value,
+    ),
+  ]
+
+  const batteryInstalled = isMountInstalled(props.aircraft, 'battery:main')
+  const batteryBounds = batteryInstalled
+    ? aircraftRenderer.boundsForMount('battery:main')
+    : null
+  diagnostics.push(
+    ...batteryEnvelopeDiagnostic(
+      props.aircraft,
+      props.components,
+      batteryBounds
+        ? { x: batteryBounds.width, y: batteryBounds.height, z: batteryBounds.depth }
+        : null,
+    ),
+  )
+  spatialDiagnostics.value = diagnostics
+  emit('spatial-diagnostics', diagnostics)
 }
 
 function errorText(error: unknown): string {
@@ -380,6 +569,28 @@ function syncVisualTestProbe(): void {
       selected: label.selected,
       issue: label.issue,
     })),
+    mountPoints: resolvedMountPoints.value.map(mount => ({
+      id: mount.id,
+      slot: mount.slot,
+      label: mount.label,
+      position: { ...mount.position },
+      required: mount.required,
+      motorName: mount.motorName,
+    })),
+    partInstances: aircraftRenderer.partInstancesSnapshot(),
+    pendingInstall: props.pendingInstall
+      ? { ...props.pendingInstall }
+      : null,
+    hoveredMountId: hoveredMountId.value,
+    selectedMountId: props.selectedMountId ?? null,
+    spatialDiagnostics: spatialDiagnostics.value.map(item => ({
+      ...item,
+      slots: [...item.slots],
+      mountIds: [...item.mountIds],
+    })),
+    activeInstallation: activeInstallation
+      ? { ...activeInstallation }
+      : null,
   }
 }
 
@@ -393,9 +604,12 @@ async function rebuildAircraftAssets(): Promise<void> {
     await aircraftRenderer.rebuild(props.aircraft, props.components)
     if (generation !== rebuildGeneration) return
     aircraftRenderer.setExplodedProgress(explosionProgress.value)
+    refreshSpatialDiagnostics()
     buildOverlay()
     updateExplodedComponentLabels()
     applyAssemblyState()
+    startInstallationAnimationIfNeeded()
+    updateMountHotspots()
     fitAircraftToView()
     resetFlightSmoothing()
     if (props.telemetry) ingestTelemetryFrame(props.telemetry)
@@ -522,6 +736,10 @@ function applyAssemblyState(): void {
     props.selectedSlot ?? null,
     props.issueSlots,
     props.issueMounts,
+    props.selectedMountId ?? null,
+    props.issueMountIds,
+    props.pendingInstall?.slot ?? null,
+    hoveredMountId.value,
   )
   const display = settingsStore.settings.display_3d
   thrustArrows.forEach(arrow => { arrow.visible = display.show_thrust_vectors && !assemblyMode.value })
@@ -712,8 +930,131 @@ function updateExplodedComponentLabels(): void {
   })
 }
 
+function mountShortLabel(mount: MountPoint): string {
+  return mount.motorName ?? (
+    mount.slot === 'battery' ? 'BAT'
+      : mount.slot === 'flight_controller' ? 'FC'
+        : mount.slot === 'power_module' ? 'PWR'
+          : mount.slot === 'gnss' ? 'GNSS'
+            : mount.slot === 'payload' ? 'PAY'
+              : mount.slot.toUpperCase()
+  )
+}
+
+function updateMountHotspots(): void {
+  if (
+    !host.value ||
+    !aircraftRenderer ||
+    !props.pendingInstall ||
+    assemblyViewMode.value !== 'assembled'
+  ) {
+    if (mountHotspots.value.length > 0) mountHotspots.value = []
+    return
+  }
+
+  const missing = missingMountsForSlot(
+    props.aircraft,
+    resolvedMountPoints.value,
+    props.pendingInstall.slot,
+  )
+  mountHotspots.value = missing.flatMap(mount => {
+    const point = projectedPartPoint(simulationVectorToThree(mount.position))
+    if (!point.visible) return []
+    return [{
+      mountId: mount.id,
+      label: mount.label,
+      shortLabel: mountShortLabel(mount),
+      left: point.x,
+      top: point.y,
+    }]
+  })
+}
+
+function hoverMount(mountId: string): void {
+  hoveredMountId.value = mountId
+  applyAssemblyState()
+  syncVisualTestProbe()
+}
+
+function leaveMount(mountId: string): void {
+  if (hoveredMountId.value !== mountId) return
+  hoveredMountId.value = null
+  applyAssemblyState()
+  syncVisualTestProbe()
+}
+
+function installMount(mountId: string): void {
+  hoveredMountId.value = null
+  applyAssemblyState()
+  emit('install-at-mount', mountId)
+}
+
+function startInstallationAnimationIfNeeded(): void {
+  const request = props.installAnimation
+  if (!request || request.serial === lastInstallationSerial || !aircraftRenderer) return
+  const exists = aircraftRenderer
+    .partInstancesSnapshot()
+    .some(item => item.mountId === request.mountId && item.installed)
+  if (!exists) return
+  lastInstallationSerial = request.serial
+  activeInstallation = {
+    mountId: request.mountId,
+    progress: 0,
+    serial: request.serial,
+    mode: 'install',
+  }
+  aircraftRenderer.setInstallationProgress(request.mountId, 0)
+  syncVisualTestProbe()
+}
+
+function startRemovalAnimationIfNeeded(): void {
+  const request = props.removeAnimation
+  if (!request || request.serial === lastRemovalSerial || !aircraftRenderer) return
+  const exists = aircraftRenderer
+    .partInstancesSnapshot()
+    .some(item => item.mountId === request.mountId && item.installed)
+  if (!exists) return
+  lastRemovalSerial = request.serial
+  activeInstallation = {
+    mountId: request.mountId,
+    progress: 1,
+    serial: request.serial,
+    mode: 'remove',
+  }
+  aircraftRenderer.setInstallationProgress(request.mountId, 1)
+  syncVisualTestProbe()
+}
+
+function advanceInstallationAnimation(dt: number): void {
+  if (!activeInstallation || !aircraftRenderer) return
+
+  if (activeInstallation.mode === 'install') {
+    activeInstallation.progress = Math.min(1, activeInstallation.progress + dt / 0.46)
+    const t = activeInstallation.progress
+    const eased = 1 - Math.pow(1 - t, 3)
+    aircraftRenderer.setInstallationProgress(activeInstallation.mountId, eased)
+    if (t >= 1) {
+      aircraftRenderer.setInstallationProgress(activeInstallation.mountId, 1)
+      activeInstallation = null
+      syncVisualTestProbe()
+    }
+    return
+  }
+
+  activeInstallation.progress = Math.max(0, activeInstallation.progress - dt / 0.34)
+  const t = activeInstallation.progress
+  const eased = t * t * (3 - 2 * t)
+  aircraftRenderer.setInstallationProgress(activeInstallation.mountId, eased)
+  if (t <= 0) {
+    aircraftRenderer.setInstallationProgress(activeInstallation.mountId, 0)
+    activeInstallation = null
+    syncVisualTestProbe()
+  }
+}
+
 function setAssemblyViewMode(mode: AssemblyViewMode): void {
   if (!assemblyMode.value || assemblyViewMode.value === mode) return
+  if (mode === 'exploded' && props.pendingInstall) return
   assemblyViewMode.value = mode
   if (cameraMode.value === 'follow') setCameraMode('free')
   buildOverlay()
@@ -751,22 +1092,33 @@ function setPointer(event: PointerEvent): void {
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
 }
 
-function sceneSlotAtPointer(event: PointerEvent): AssemblySlot | null {
+function sceneTargetAtPointer(
+  event: PointerEvent,
+): { slot: AssemblySlot; mountId: string | null } | null {
   if (!props.interactive || !aircraftRenderer) return null
   setPointer(event)
   raycaster.setFromCamera(pointer, camera)
   const hit = raycaster.intersectObjects(aircraftRenderer.raycastMeshes(), false)[0]
-  return hit ? aircraftRenderer.slotForObject(hit.object) : null
+  if (!hit) return null
+  const slot = aircraftRenderer.slotForObject(hit.object)
+  if (!slot) return null
+  return {
+    slot,
+    mountId: aircraftRenderer.mountForObject(hit.object),
+  }
 }
 
 function onPointerDown(event: PointerEvent): void {
-  const slot = sceneSlotAtPointer(event)
-  if (slot) emit('select-slot', slot)
+  const target = sceneTargetAtPointer(event)
+  if (!target) return
+  emit('select-slot', target.slot)
+  if (target.mountId) emit('select-mount', target.mountId, target.slot)
 }
 
 function onPointerMove(event: PointerEvent): void {
-  cursor.value = sceneSlotAtPointer(event) ? 'pointer' : 'default'
+  cursor.value = sceneTargetAtPointer(event) ? 'pointer' : 'default'
 }
+
 
 function setCameraMode(mode: typeof cameraMode.value): void {
   cameraMode.value = mode
@@ -823,6 +1175,7 @@ function animate(now = performance.now()): void {
   const dt = Math.min(0.05, Math.max(0, (now - previousAnimationTime) / 1000))
   previousAnimationTime = now
   advanceExplodedView(dt)
+  advanceInstallationAnimation(dt)
   advanceSmoothedFlight(dt)
   const rotorInputs = props.telemetry ? flightSmoothing.renderedThrusts : undefined
   aircraftRenderer?.rotateRotors(
@@ -831,6 +1184,7 @@ function animate(now = performance.now()): void {
   updateManagedCamera(dt)
   controls?.update()
   updateExplodedComponentLabels()
+  updateMountHotspots()
   renderer?.render(scene, camera)
 }
 
@@ -859,6 +1213,10 @@ const componentSignature = computed(() => {
     aircraft?.flight_controller_id,
     aircraft?.gnss_id,
     aircraft?.payload_id,
+    aircraft?.assembly_instances
+      ?.map(item => `${item.mount_id}:${item.component_id}`)
+      .sort()
+      .join(',') ?? 'LEGACY',
     props.components
       .map(component => `${component.id}:${component.visual?.asset_key ?? 'NO_VISUAL'}`)
       .join(','),
@@ -914,12 +1272,45 @@ watch(componentSignature, () => { void rebuildAircraftAssets() })
 watch(() => settingsStore.settings.display_3d, () => { applyDisplaySettings() }, { deep: true })
 watch(() => props.telemetry, frame => { if (frame) ingestTelemetryFrame(frame) }, { deep: true })
 watch(
-  () => [props.selectedSlot, props.issueSlots, props.issueMounts, props.engineering, props.aircraft] as const,
+  () => [
+    props.selectedSlot,
+    props.selectedMountId,
+    props.issueSlots,
+    props.issueMounts,
+    props.issueMountIds,
+    props.engineering,
+    props.aircraft,
+  ] as const,
   () => {
+    refreshSpatialDiagnostics()
     applyAssemblyState()
     buildOverlay()
     updateExplodedComponentLabels()
+    updateMountHotspots()
   },
+  { deep: true },
+)
+watch(
+  () => props.pendingInstall,
+  () => {
+    if (props.pendingInstall) {
+      assemblyViewMode.value = 'assembled'
+    } else {
+      hoveredMountId.value = null
+    }
+    updateMountHotspots()
+    syncVisualTestProbe()
+  },
+  { deep: true },
+)
+watch(
+  () => props.installAnimation,
+  () => { startInstallationAnimationIfNeeded() },
+  { deep: true },
+)
+watch(
+  () => props.removeAnimation,
+  () => { startRemovalAnimationIfNeeded() },
   { deep: true },
 )
 
@@ -1064,4 +1455,138 @@ onBeforeUnmount(() => {
   font-size: 11px;
 }
 
+
+.asset-toolbar button.scene-chip:disabled {
+  cursor: not-allowed;
+  opacity: .42;
+  transform: none;
+}
+.assembly-install-banner {
+  position: absolute;
+  z-index: 7;
+  left: 50%;
+  top: 58px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 300px;
+  max-width: min(520px, calc(100% - 260px));
+  padding: 8px 12px;
+  border: 1px solid rgba(78, 148, 239, .42);
+  border-radius: 12px;
+  background: rgba(244, 249, 255, .92);
+  box-shadow: 0 8px 26px rgba(30, 82, 148, .12);
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+.assembly-install-banner .install-pulse {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #2583f7;
+  box-shadow: 0 0 0 5px rgba(37, 131, 247, .13);
+  animation: installPulse 1.35s ease-in-out infinite;
+}
+.assembly-install-banner div {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+.assembly-install-banner b {
+  color: #164b85;
+  font-size: 11px;
+}
+.assembly-install-banner small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #68809c;
+  font-size: 9px;
+}
+.mount-hotspot-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+.mount-hotspot {
+  position: absolute;
+  width: 42px;
+  height: 42px;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #165fae;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.mount-hotspot > span {
+  position: absolute;
+  inset: 7px;
+  border: 2px solid rgba(43, 137, 244, .88);
+  border-radius: 50%;
+  background: rgba(91, 174, 255, .10);
+  box-shadow:
+    0 0 0 5px rgba(59, 130, 246, .08),
+    0 0 20px rgba(37, 99, 235, .20);
+  animation: anchorPulse 1.45s ease-in-out infinite;
+}
+.mount-hotspot b {
+  position: absolute;
+  top: 36px;
+  min-width: 30px;
+  padding: 2px 5px;
+  border: 1px solid rgba(141, 176, 218, .62);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .92);
+  color: #285b95;
+  font-size: 8px;
+  line-height: 1;
+  box-shadow: 0 3px 10px rgba(27, 62, 104, .08);
+}
+.mount-hotspot.hovered > span,
+.mount-hotspot:hover > span,
+.mount-hotspot:focus-visible > span {
+  border-color: #00a7e8;
+  background: rgba(0, 174, 239, .16);
+  box-shadow:
+    0 0 0 7px rgba(0, 167, 232, .10),
+    0 0 26px rgba(0, 130, 210, .34);
+  transform: scale(1.08);
+}
+.spatial-diagnostic-pill {
+  position: absolute;
+  z-index: 6;
+  right: 12px;
+  bottom: 48px;
+  display: grid;
+  gap: 2px;
+  max-width: 270px;
+  padding: 7px 9px;
+  border: 1px solid #f0d49b;
+  border-radius: 9px;
+  background: rgba(255, 251, 237, .93);
+  color: #8a6418;
+  font-size: 9px;
+  pointer-events: none;
+}
+.spatial-diagnostic-pill.error {
+  border-color: #efb3ad;
+  background: rgba(255, 246, 245, .94);
+  color: #a7382f;
+}
+.spatial-diagnostic-pill b {
+  font-size: 10px;
+}
+@keyframes anchorPulse {
+  50% { transform: scale(1.12); opacity: .68; }
+}
+@keyframes installPulse {
+  50% { transform: scale(.78); opacity: .62; }
+}
 </style>

@@ -2,6 +2,7 @@ import axios from 'axios'
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { api, telemetryWsUrl } from '../api/client'
+import { useAssemblyStore } from './assembly'
 import type { Vector3Value } from '../types/aircraft'
 import type {
   SimulationSnapshot,
@@ -12,8 +13,6 @@ import {
   FLIGHT_MODE_LABELS,
   SIMULATION_STATUS_LABELS,
 } from '../utils/telemetry'
-
-const DEFAULT_AIRCRAFT_ID = 1
 
 const emptyTelemetry: TelemetryFrame = {
   t: 0,
@@ -114,14 +113,24 @@ export const useSimulationStore = defineStore('simulation', () => {
   async function createSimulation(): Promise<void> {
     error.value = ''
     try {
+      const assemblyStore = useAssemblyStore()
+      await assemblyStore.initialize()
+      const aircraftId = assemblyStore.activeAircraftId
+      if (!aircraftId) {
+        throw new Error('当前没有可用于飞行实验的飞机设计')
+      }
+
       const response = await api.post<SimulationSnapshot>('/simulations', {
-        aircraft_id: DEFAULT_AIRCRAFT_ID,
+        aircraft_id: aircraftId,
       })
       history.value = []
       applySnapshot(response.data)
       connectTelemetry()
     } catch (caught) {
       error.value = requestErrorMessage(caught)
+      if (caught instanceof Error && !axios.isAxiosError(caught)) {
+        error.value = caught.message
+      }
       throw caught
     }
   }

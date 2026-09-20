@@ -362,6 +362,17 @@ class PropellerMountDirections(BaseModel):
     M4: RotorDirection = "CW"
 
 
+class AssemblyInstance(BaseModel):
+    """One physical component instance mounted at one semantic installation point."""
+
+    model_config = MODEL_CONFIG
+
+    mount_id: str = Field(min_length=3, max_length=80)
+    slot: ComponentType
+    component_id: int = Field(gt=0)
+
+
+
 class AircraftDefinition(BaseModel):
     model_config = MODEL_CONFIG
 
@@ -379,6 +390,14 @@ class AircraftDefinition(BaseModel):
     payload_id: int | None = Field(default=None, gt=0)
     gnss_position_m: Vector3 | None = None
     payload_position_m: Vector3 | None = None
+    assembly_instances: list[AssemblyInstance] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_unique_assembly_mounts(self) -> "AircraftDefinition":
+        mount_ids = [item.mount_id for item in self.assembly_instances]
+        if len(mount_ids) != len(set(mount_ids)):
+            raise ValueError("assembly_instances mount_id values must be unique")
+        return self
 
 
 class AssemblyIssue(BaseModel):
@@ -389,6 +408,7 @@ class AssemblyIssue(BaseModel):
     message: str = Field(min_length=1)
     affected_slots: list[ComponentType] = Field(default_factory=list)
     affected_mounts: list[MotorName] = Field(default_factory=list)
+    affected_mount_ids: list[str] = Field(default_factory=list)
 
 
 class AssemblyValidationResult(BaseModel):
@@ -435,12 +455,63 @@ class AircraftEngineeringSummary(BaseModel):
     estimation_note: Literal["Educational Estimation"] = "Educational Estimation"
 
 
+class AircraftMetadataUpdate(BaseModel):
+    model_config = MODEL_CONFIG
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def require_change(self) -> "AircraftMetadataUpdate":
+        if self.name is None and self.description is None:
+            raise ValueError("name or description is required")
+        return self
+
+
+class AircraftCreateFromTemplate(BaseModel):
+    model_config = MODEL_CONFIG
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str = Field(default="", max_length=1000)
+
+
+class AircraftDuplicateRequest(BaseModel):
+    model_config = MODEL_CONFIG
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class AircraftTemplate(BaseModel):
+    model_config = MODEL_CONFIG
+
+    key: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    description: str
+    aircraft: AircraftDefinition
+
+
+
+
 class AssemblyState(BaseModel):
     model_config = MODEL_CONFIG
 
     aircraft: AircraftDefinition
     engineering: AircraftEngineeringSummary | None
     validation: AssemblyValidationResult
+
+
+class AircraftLibraryItem(BaseModel):
+    model_config = MODEL_CONFIG
+
+    aircraft: AircraftDefinition
+    engineering: AircraftEngineeringSummary | None
+    validation: AssemblyValidationResult
+    description: str = ""
+    created_at: datetime
+    updated_at: datetime
+    experiment_count: int = Field(default=0, ge=0)
+
+
 
 
 class TelemetryFrame(BaseModel):

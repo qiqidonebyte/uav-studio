@@ -1,0 +1,12 @@
+{
+  "repository": "qiqidonebyte/uav-studio",
+  "branch": "main",
+  "head": "61a9a82e5c49f039d9b741438b721fd04c5230ab",
+  "head_message": "feat: fix propeller overlap and update realistic assets",
+  "package": "UAV Studio v1.5.1 Aircraft Library",
+  "cumulative_overlays": [
+    "v1.5 Digital Assembly Edition",
+    "v1.5.1 Aircraft Library / Design Save"
+  ],
+  "note": "GitHub main was rechecked before implementation. The v1.5 Digital Assembly overlay is not yet on GitHub, so this package is cumulative on top of the cloud baseline."
+}

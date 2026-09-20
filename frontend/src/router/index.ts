@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import AircraftLibrary from '../views/AircraftLibrary.vue'
 import Assembly from '../views/Assembly.vue'
 import FlightLab from '../views/FlightLab.vue'
 import History from '../views/History.vue'
@@ -9,7 +10,8 @@ import Settings from '../views/Settings.vue'
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', redirect: '/assembly' },
+    { path: '/', redirect: '/aircraft' },
+    { path: '/aircraft', component: AircraftLibrary },
     { path: '/assembly', component: Assembly },
     { path: '/flight', component: FlightLab },
     { path: '/history', component: History },

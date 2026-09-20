@@ -50,10 +50,31 @@
             @click="store.selectSlot(slot)"
           >
             <div class="slot-picker-head">
-              <b>{{ SLOT_LABELS[slot] }}</b>
+              <div>
+                <b>{{ SLOT_LABELS[slot] }}</b>
+                <small v-if="slot !== 'frame'" class="mount-completion">
+                  {{ completionText(slot) }}
+                </small>
+              </div>
               <span :class="store.componentForSlot(slot) ? 'installed' : 'empty'">
-                {{ store.componentForSlot(slot)?.name ?? '未安装' }}
+                {{ store.componentForSlot(slot)?.name ?? '未选择' }}
               </span>
+            </div>
+
+            <div
+              v-if="store.pendingInstall?.slot === slot"
+              class="assembly-session-card"
+              data-testid="assembly-session-card"
+            >
+              <span class="session-dot"></span>
+              <div>
+                <b>正在进行 3D 装配</b>
+                <small>
+                  {{ pendingComponentName }} ·
+                  {{ completionText(slot) }}
+                </small>
+              </div>
+              <button type="button" @click.stop="store.cancelMountAssembly()">取消</button>
             </div>
 
             <div class="component-card-list">
@@ -61,13 +82,15 @@
                 v-for="component in availableComponents(slot)"
                 :key="component.id"
                 :component="component"
-                :installed="installedId(slot) === component.id"
+                :installed="installedId(slot) === component.id && isSlotPhysicallyComplete(slot)"
                 :selected="candidateFor(slot) === component.id"
                 :disabled="store.saving"
                 :specs="componentSpecs(component)"
                 :action-label="cardActionLabel(slot)"
+                :secondary-action-label="slot === 'frame' ? '' : '3D装配'"
                 @choose="chooseCandidate(slot, component.id)"
                 @install="install(slot, component.id)"
+                @secondary="begin3dAssembly(slot, component.id)"
               />
             </div>
 
@@ -94,20 +117,51 @@
       <div class="stage-titlebar">
         <div>
           <b>{{ store.aircraftName }}</b>
-          <span>四旋翼 X 型数字母机</span>
+          <span>
+            {{
+              store.pendingInstall
+                ? `受约束 3D 装配 · ${SLOT_LABELS[store.pendingInstall.slot]}`
+                : '四旋翼 X 型数字样机'
+            }}
+          </span>
         </div>
-        <div class="stage-live-state">
-          <span :class="store.validation.passed ? 'ok-dot' : 'pending-dot'"></span>
-          {{ store.validation.passed ? '装配有效' : '装配未完成' }}
+        <div class="stage-title-actions">
+          <span :class="['assembly-save-state', store.saveStatus]">
+            <i></i>{{ store.saveStatusZh }}
+          </span>
+          <RouterLink class="stage-library-link" to="/aircraft">我的飞机</RouterLink>
+          <button class="stage-copy-button" :disabled="store.saving" @click="saveAsCopy()">
+            另存为副本
+          </button>
+          <div class="stage-live-state">
+            <span
+              :class="store.pendingInstall ? 'assembly-dot' : (store.validation.passed ? 'ok-dot' : 'pending-dot')"
+            ></span>
+            {{
+              store.pendingInstall
+                ? '选择蓝色 Mount Anchor'
+                : (store.validation.passed ? '装配有效' : '装配未完成')
+            }}
+          </div>
         </div>
       </div>
       <DroneScene
         :aircraft="store.aircraft"
         :components="store.components"
         :selected-slot="store.selectedSlot"
+        :selected-mount-id="store.selectedMountId"
+        :pending-install="store.pendingInstall"
+        :install-animation="store.lastInstallation"
+        :remove-animation="store.lastRemoval"
         :engineering="store.engineering"
+        :issue-slots="issueSlots"
+        :issue-mounts="issueMounts"
+        :issue-mount-ids="issueMountIds"
         interactive
         @select-slot="selectSceneSlot"
+        @select-mount="selectSceneMount"
+        @install-at-mount="installAtMount"
+        @spatial-diagnostics="updateSpatialDiagnostics"
       />
       <div v-if="store.loading" class="stage-loading">正在读取组件库与飞机装配数据…</div>
       <div v-else-if="!store.aircraft && store.error" class="stage-loading error">
@@ -119,11 +173,36 @@
       <section class="inspector-section">
         <div class="inspector-heading">
           <div>
-            <h3>部件检查器</h3>
-            <p>{{ store.selectedSlot ? SLOT_LABELS[store.selectedSlot] : '尚未选择部件' }}</p>
+            <h3>装配检查器</h3>
+            <p>
+              {{
+                selectedMount
+                  ? selectedMount.label
+                  : (store.selectedSlot ? SLOT_LABELS[store.selectedSlot] : '尚未选择部件')
+              }}
+            </p>
           </div>
-          <span v-if="selectedComponent" class="component-state">已安装</span>
+          <span
+            v-if="selectedMount"
+            :class="['component-state', { pending: !selectedMountInstalled }]"
+          >
+            {{ selectedMountInstalled ? '已安装' : '待安装' }}
+          </span>
+          <span v-else-if="selectedComponent" class="component-state">已配置</span>
         </div>
+
+        <div v-if="selectedMount" class="mount-inspector" data-testid="mount-inspector">
+          <div class="mount-id-row">
+            <span>Mount Anchor</span>
+            <code>{{ selectedMount.id }}</code>
+          </div>
+          <div class="mount-position">
+            <span>X {{ formatMillimeters(selectedMount.position.x) }}</span>
+            <span>Y {{ formatMillimeters(selectedMount.position.y) }}</span>
+            <span>Z {{ formatMillimeters(selectedMount.position.z) }}</span>
+          </div>
+        </div>
+
         <dl v-if="selectedComponent" class="component-properties">
           <div><dt>名称</dt><dd>{{ selectedComponent.name }}</dd></div>
           <div><dt>类别</dt><dd>{{ componentTypeLabel(selectedComponent.type) }}</dd></div>
@@ -140,10 +219,50 @@
             <dd>{{ parameter.value }}</dd>
           </div>
         </dl>
+
+        <div v-else-if="selectedMount" class="empty-inspector">
+          <b>该安装位当前为空</b>
+          <span>从左侧选择组件并进入 3D 装配，Ghost 会吸附到此安装点。</span>
+        </div>
         <div v-else class="empty-inspector">
           <b>点击 3D 部件</b>
-          <span>可查看组件属性和当前安装位置。</span>
+          <span>现在可以定位到具体 M1–M4 或单组件 Mount Anchor。</span>
         </div>
+
+        <button
+          v-if="selectedMount && selectedMountInstalled && selectedMount.slot !== 'frame'"
+          class="mount-remove-button"
+          :disabled="store.saving || Boolean(store.removingMountId)"
+          data-testid="remove-selected-mount"
+          @click="store.removeMount(selectedMount.id)"
+        >
+          {{ store.removingMountId === selectedMount.id ? '拆卸动画…' : '拆卸此安装位' }}
+        </button>
+      </section>
+
+      <section class="inspector-section">
+        <div class="inspector-heading">
+          <div>
+            <h3>空间工程检查</h3>
+            <p>基于 Mount / Rotor Disc / GLB Envelope</p>
+          </div>
+          <span :class="['check-badge', spatialHasError ? 'error' : 'ok']">
+            {{ spatialHasError ? '干涉' : '正常' }}
+          </span>
+        </div>
+        <div v-if="spatialDiagnostics.length === 0" class="spatial-ok">
+          <b>未发现空间干涉</b>
+          <span>旋翼盘与当前教学安装包络正常。</span>
+        </div>
+        <button
+          v-for="diagnostic in spatialDiagnostics"
+          :key="diagnostic.code"
+          :class="['validation-item', diagnostic.severity, 'diagnostic-button']"
+          @click="focusSpatialDiagnostic(diagnostic)"
+        >
+          <b>{{ diagnostic.severity === 'error' ? '空间错误' : '空间提醒' }}</b>
+          <span>{{ diagnostic.message }}</span>
+        </button>
       </section>
 
       <section class="inspector-section">
@@ -176,31 +295,33 @@
         <div class="inspector-heading">
           <div>
             <h3>装配检查</h3>
-            <p>结果由后端工程计算生成</p>
+            <p>工程 + 物理 Mount 双重验证</p>
           </div>
           <span :class="['check-badge', store.validation.passed ? 'ok' : 'error']">
             {{ store.validation.passed ? '通过' : '阻断' }}
           </span>
         </div>
 
-        <div
+        <button
           v-for="issue in store.validation.blocking_errors"
           :key="issue.code"
-          class="validation-item error"
+          class="validation-item error diagnostic-button"
+          @click="focusIssue(issue)"
         >
           <b>阻断错误</b>
           <span>{{ issue.message }}</span>
-        </div>
-        <div
+        </button>
+        <button
           v-for="issue in store.validation.warnings"
           :key="issue.code"
-          class="validation-item warning"
+          class="validation-item warning diagnostic-button"
+          @click="focusIssue(issue)"
         >
           <b>警告</b>
           <span>{{ issue.message }}</span>
-        </div>
+        </button>
         <p v-if="store.validation.passed && store.validation.warnings.length === 0" class="check-ok">
-          所有必需组件、动力和电气检查均已通过。
+          工程参数、必需 Mount 和空间检查均已通过。
         </p>
 
         <RouterLink
@@ -216,8 +337,8 @@
 
     <section class="bottom-panel assembly-bottom">
       <div class="assembly-hint">
-        <b>当前教学重点：</b>
-        按真实四旋翼装调顺序完成系统级装配；中央模型持续显示组件位置、M1-M4 旋向和重心。
+        <b>Digital Assembly 2.0：</b>
+        组件选择 → 3D 装配 → Mount Anchor → Ghost Snap → 安装动画 → 空间检查 → 工程验证。
       </div>
       <div class="assembly-progress">
         <span>已完成 {{ completedStepCount }} / {{ ASSEMBLY_STEPS.length }} 步</span>
@@ -234,7 +355,16 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import ComponentCard from '../components/ComponentCard.vue'
 import DroneScene from '../components/DroneScene.vue'
 import { useAssemblyStore } from '../stores/assembly'
-import type { Component, ComponentType } from '../types/aircraft'
+import type {
+  AssemblyIssue,
+  Component,
+  ComponentType,
+  MotorName,
+} from '../types/aircraft'
+import type {
+  MountPoint,
+  SpatialDiagnostic,
+} from '../three/assemblySemantics'
 import {
   ASSEMBLY_STEPS,
   getStepStatus,
@@ -248,6 +378,7 @@ import {
 const store = useAssemblyStore()
 const activeStepIndex = ref(0)
 const candidateSelections = reactive<Partial<Record<AssemblySlot, number>>>({})
+const spatialDiagnostics = ref<SpatialDiagnostic[]>([])
 const stateText = {
   done: '已配置',
   warning: '警告',
@@ -256,14 +387,52 @@ const stateText = {
 } as const
 
 const activeStep = computed(() => ASSEMBLY_STEPS[activeStepIndex.value])
-const selectedComponent = computed(() =>
-  store.selectedSlot ? store.componentForSlot(store.selectedSlot) : null,
+const selectedMount = computed<MountPoint | null>(() =>
+  store.selectedMountId
+    ? store.mountPoints.find(item => item.id === store.selectedMountId) ?? null
+    : null,
 )
+const selectedMountComponent = computed(() =>
+  store.selectedMountId ? store.componentForMount(store.selectedMountId) : null,
+)
+const selectedComponent = computed(() =>
+  selectedMount.value
+    ? selectedMountComponent.value
+    : (store.selectedSlot ? store.componentForSlot(store.selectedSlot) : null),
+)
+const selectedMountInstalled = computed(() => Boolean(selectedMountComponent.value))
+const pendingComponentName = computed(() => {
+  const pending = store.pendingInstall
+  if (!pending) return ''
+  return store.components.find(item => item.id === pending.componentId)?.name ?? `#${pending.componentId}`
+})
 const completedStepCount = computed(() =>
   ASSEMBLY_STEPS.filter(step => {
     const status = stepStatus(step)
     return status === 'done' || status === 'warning'
   }).length,
+)
+const allIssues = computed(() => [
+  ...store.validation.blocking_errors,
+  ...store.validation.warnings,
+])
+const issueSlots = computed<AssemblySlot[]>(() =>
+  [...new Set(
+    allIssues.value.flatMap(issue => issue.affected_slots ?? []),
+  )] as AssemblySlot[],
+)
+const issueMounts = computed<MotorName[]>(() =>
+  [...new Set(
+    allIssues.value.flatMap(issue => issue.affected_mounts ?? []),
+  )] as MotorName[],
+)
+const issueMountIds = computed(() =>
+  [...new Set(
+    allIssues.value.flatMap(issue => issue.affected_mount_ids ?? []),
+  )],
+)
+const spatialHasError = computed(
+  () => spatialDiagnostics.value.some(item => item.severity === 'error'),
 )
 
 const parameterLabels: Record<string, string> = {
@@ -311,7 +480,10 @@ onMounted(async () => {
 function activateStep(index: number): void {
   activeStepIndex.value = index
   const firstSlot = ASSEMBLY_STEPS[index]?.slots[0]
-  if (firstSlot) store.selectSlot(firstSlot)
+  if (firstSlot) {
+    store.selectSlot(firstSlot)
+    store.selectMount(null)
+  }
 }
 
 function stepStatus(step: AssemblyStep) {
@@ -334,6 +506,7 @@ function candidateFor(slot: AssemblySlot): number | null {
 function chooseCandidate(slot: AssemblySlot, componentId: number): void {
   candidateSelections[slot] = componentId
   store.selectSlot(slot)
+  store.selectMount(null)
 }
 
 async function install(slot: AssemblySlot, componentId: number): Promise<void> {
@@ -341,6 +514,20 @@ async function install(slot: AssemblySlot, componentId: number): Promise<void> {
   await store.installComponent(slot, componentId)
   candidateSelections[slot] = componentId
 }
+
+async function begin3dAssembly(slot: AssemblySlot, componentId: number): Promise<void> {
+  chooseCandidate(slot, componentId)
+  await store.beginMountAssembly(slot, componentId)
+  candidateSelections[slot] = componentId
+}
+
+async function installAtMount(mountId: string): Promise<void> {
+  await store.installAtMount(mountId)
+}
+function updateSpatialDiagnostics(diagnostics: SpatialDiagnostic[]): void {
+  spatialDiagnostics.value = diagnostics
+}
+
 
 async function remove(slot: AssemblySlot): Promise<void> {
   await store.removeComponent(slot)
@@ -351,16 +538,63 @@ function isOptionalSlot(slot: AssemblySlot): boolean {
   return slot === 'gnss' || slot === 'payload'
 }
 
+function isSlotPhysicallyComplete(slot: AssemblySlot): boolean {
+  const completion = store.completionForSlot(slot)
+  return completion.installed >= completion.total
+}
+
+function completionText(slot: AssemblySlot): string {
+  const completion = store.completionForSlot(slot)
+  return `${completion.installed} / ${completion.total} Mount`
+}
+
 function cardActionLabel(slot: AssemblySlot): string {
-  if (store.componentForSlot(slot)) return '更换'
-  if (slot === 'motor' || slot === 'esc' || slot === 'propeller') return '安装 ×4'
-  return '安装'
+  if (store.componentForSlot(slot)) return '快速更换'
+  if (slot === 'motor' || slot === 'esc' || slot === 'propeller') return '快速配置 ×4'
+  return '快速配置'
 }
 
 function selectSceneSlot(slot: AssemblySlot): void {
   store.selectSlot(slot)
   const stepIndex = ASSEMBLY_STEPS.findIndex(step => step.slots.includes(slot))
   if (stepIndex >= 0) activeStepIndex.value = stepIndex
+}
+
+function selectSceneMount(mountId: string, slot: AssemblySlot): void {
+  store.selectMount(mountId)
+  selectSceneSlot(slot)
+}
+
+function focusIssue(issue: AssemblyIssue): void {
+  const mountId = issue.affected_mount_ids?.[0]
+  if (mountId) {
+    store.selectMount(mountId)
+    const slot = mountId.split(':', 1)[0] as AssemblySlot
+    selectSceneSlot(slot)
+    return
+  }
+  const slot = issue.affected_slots?.[0] as AssemblySlot | undefined
+  if (slot) selectSceneSlot(slot)
+}
+
+function focusSpatialDiagnostic(diagnostic: SpatialDiagnostic): void {
+  const mountId = diagnostic.mountIds[0]
+  if (mountId) {
+    store.selectMount(mountId)
+    const slot = mountId.split(':', 1)[0] as AssemblySlot
+    selectSceneSlot(slot)
+    return
+  }
+  const slot = diagnostic.slots[0] as AssemblySlot | undefined
+  if (slot) selectSceneSlot(slot)
+}
+
+async function saveAsCopy(): Promise<void> {
+  if (!store.aircraft) return
+  const suggested = `${store.aircraft.name} - 副本`
+  const name = globalThis.prompt?.('另存为新的飞机设计', suggested)
+  if (name === null) return
+  await store.duplicateActive(name?.trim() || suggested)
 }
 
 function componentTypeLabel(type: ComponentType): string {
@@ -460,4 +694,167 @@ function formatPower(watts: number): string {
   width: 100%;
   margin-top: 9px;
 }
+.slot-picker-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.mount-completion {
+  color: #718096;
+  font-size: 8px;
+  font-weight: 700;
+}
+.assembly-session-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+  padding: 8px 9px;
+  border: 1px solid #a9caf5;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #f3f8ff, #edf5ff);
+}
+.session-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2b82ee;
+  box-shadow: 0 0 0 4px rgba(43, 130, 238, .12);
+}
+.assembly-session-card div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.assembly-session-card b {
+  color: #20578f;
+  font-size: 10px;
+}
+.assembly-session-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #6d8299;
+  font-size: 8px;
+}
+.assembly-session-card button {
+  border: 0;
+  background: transparent;
+  color: #627890;
+  font-size: 9px;
+  cursor: pointer;
+}
+.stage-live-state .assembly-dot,
+.assembly-dot {
+  background: #2f80ed;
+  box-shadow: 0 0 0 4px rgba(47, 128, 237, .12);
+}
+.component-state.pending {
+  background: #f2f5f8;
+  color: #77859a;
+}
+.mount-inspector {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 10px;
+  padding: 9px;
+  border: 1px solid #dbe6f3;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+.mount-id-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 9px;
+  color: #6e7d91;
+}
+.mount-id-row code {
+  color: #245da5;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-weight: 700;
+}
+.mount-position {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.mount-position span {
+  padding: 3px 5px;
+  border-radius: 5px;
+  background: #edf3fa;
+  color: #52657c;
+  font-size: 8px;
+}
+.mount-remove-button {
+  width: 100%;
+  margin-top: 9px;
+  padding: 7px;
+  border: 1px solid #e3b9b4;
+  border-radius: 7px;
+  background: #fff8f7;
+  color: #a83c32;
+  font-size: 9px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.spatial-ok {
+  display: grid;
+  gap: 3px;
+  padding: 9px;
+  border: 1px solid #cfe7d8;
+  border-radius: 8px;
+  background: #f4fbf7;
+}
+.spatial-ok b {
+  color: #28734c;
+  font-size: 10px;
+}
+.spatial-ok span {
+  color: #708479;
+  font-size: 8px;
+}
+.diagnostic-button {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stage-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.assembly-save-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #66778d;
+  font-size: 8px;
+  font-weight: 800;
+}
+.assembly-save-state i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #42b77d;
+}
+.assembly-save-state.saving i { background: #4f91e6; }
+.assembly-save-state.error { color: #ae443b; }
+.assembly-save-state.error i { background: #e16056; }
+.stage-library-link,
+.stage-copy-button {
+  border: 1px solid #cedaea;
+  border-radius: 7px;
+  background: #fff;
+  color: #42617f;
+  padding: 6px 8px;
+  text-decoration: none;
+  font-size: 8px;
+  font-weight: 800;
+}
+.stage-copy-button { cursor: pointer; }
+.stage-copy-button:disabled { opacity: .5; cursor: not-allowed; }
 </style>

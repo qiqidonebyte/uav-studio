@@ -37,14 +37,25 @@
         </span>
       </div>
 
-      <button
-        class="component-card-action"
-        data-testid="component-install"
-        :disabled="disabled || installed || !thumbnail"
-        @click.stop="emit('install')"
-      >
-        {{ installed ? '已安装' : actionLabel }}
-      </button>
+      <div :class="['component-card-actions', { dual: secondaryActionLabel }]">
+        <button
+          class="component-card-action"
+          data-testid="component-install"
+          :disabled="disabled || installed || !thumbnail"
+          @click.stop="emit('install')"
+        >
+          {{ installed ? '已安装' : actionLabel }}
+        </button>
+        <button
+          v-if="secondaryActionLabel"
+          class="component-card-action assembly-action"
+          data-testid="component-3d-assemble"
+          :disabled="disabled || secondaryDisabled || !thumbnail"
+          @click.stop="emit('secondary')"
+        >
+          {{ secondaryActionLabel }}
+        </button>
+      </div>
     </div>
   </article>
 </template>
@@ -62,19 +73,24 @@ const props = withDefaults(
     disabled?: boolean
     specs?: string[]
     actionLabel?: string
+    secondaryActionLabel?: string
+    secondaryDisabled?: boolean
   }>(),
   {
     installed: false,
     selected: false,
     disabled: false,
     specs: () => [],
-    actionLabel: '安装',
+    actionLabel: '快速配置',
+    secondaryActionLabel: '',
+    secondaryDisabled: false,
   },
 )
 
 const emit = defineEmits<{
   (event: 'choose'): void
   (event: 'install'): void
+  (event: 'secondary'): void
 }>()
 
 const thumbnail = computed(() => {
@@ -180,17 +196,30 @@ const thumbnail = computed(() => {
   color: #56667d;
   font-size: 9px;
 }
+.component-card-actions {
+  display: grid;
+  gap: 6px;
+}
+.component-card-actions.dual {
+  grid-template-columns: minmax(0, .84fr) minmax(0, 1.16fr);
+}
 .component-card-action {
   width: 100%;
   border: 1px solid #cbd9e8;
   border-radius: 6px;
   background: #f8fbff;
   color: #245da5;
-  padding: 7px 8px;
-  font-size: 10px;
+  padding: 7px 7px;
+  font-size: 9px;
   font-weight: 800;
+  white-space: nowrap;
 }
-.component-card.selected .component-card-action:not(:disabled) {
+.component-card-action.assembly-action {
+  border-color: #8bb8f8;
+  background: linear-gradient(180deg, #eef6ff, #e6f1ff);
+  color: #1459ac;
+}
+.component-card.selected .component-card-action.assembly-action:not(:disabled) {
   border-color: #2563eb;
   background: #2563eb;
   color: #fff;

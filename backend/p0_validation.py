@@ -4,6 +4,11 @@ import json
 from pathlib import Path
 
 from backend.propeller_fit import fit_from_asset_manifest
+from backend.assembly_instances import (
+    inconsistent_instances,
+    missing_required_mount_ids,
+    pending_optional_mount_ids,
+)
 from backend.schemas import (
     AircraftDefinition,
     AssemblyIssue,
@@ -134,6 +139,82 @@ def _visual_propeller_fit_issue(
     )
 
 
+
+def _physical_assembly_issues(
+    aircraft: AircraftDefinition,
+) -> tuple[list[AssemblyIssue], list[AssemblyIssue]]:
+    errors: list[AssemblyIssue] = []
+    warnings: list[AssemblyIssue] = []
+
+    inconsistent = inconsistent_instances(aircraft)
+    if inconsistent:
+        affected_slots = sorted(
+            {
+                mount_id.split(":", 1)[0]
+                for mount_id in inconsistent
+                if ":" in mount_id
+            }
+        )
+        errors.append(
+            AssemblyIssue(
+                code="ASSEMBLY_INSTANCE_MISMATCH",
+                severity="error",
+                message=(
+                    "3D 装配实例与当前组件选择不一致："
+                    + "、".join(inconsistent)
+                ),
+                affected_slots=affected_slots,
+                affected_mount_ids=inconsistent,
+            )
+        )
+
+    missing = missing_required_mount_ids(aircraft)
+    if missing:
+        affected_slots = sorted(
+            {
+                mount_id.split(":", 1)[0]
+                for mount_id in missing
+                if ":" in mount_id
+            }
+        )
+        errors.append(
+            AssemblyIssue(
+                code="ASSEMBLY_MOUNT_INCOMPLETE",
+                severity="error",
+                message=(
+                    "物理装配尚未完成："
+                    + "、".join(missing)
+                    + "。请在 3D 装配视图中完成安装。"
+                ),
+                affected_slots=affected_slots,
+                affected_mount_ids=missing,
+            )
+        )
+
+    optional = pending_optional_mount_ids(aircraft)
+    if optional:
+        affected_slots = sorted(
+            {
+                mount_id.split(":", 1)[0]
+                for mount_id in optional
+                if ":" in mount_id
+            }
+        )
+        warnings.append(
+            AssemblyIssue(
+                code="OPTIONAL_ASSEMBLY_MOUNT_PENDING",
+                severity="warning",
+                message=(
+                    "已选择但尚未物理安装的可选组件："
+                    + "、".join(optional)
+                ),
+                affected_slots=affected_slots,
+                affected_mount_ids=optional,
+            )
+        )
+    return errors, warnings
+
+
 def augment_validation(
     aircraft: AircraftDefinition,
     validation: AssemblyValidationResult,
@@ -143,14 +224,28 @@ def augment_validation(
     def enrich(issue: AssemblyIssue) -> AssemblyIssue:
         return issue.model_copy(
             update={
-                "affected_slots": _affected_slots(aircraft, issue),
-                "affected_mounts": _affected_mounts(aircraft, issue),
+                "affected_slots": (
+                    issue.affected_slots
+                    if issue.affected_slots
+                    else _affected_slots(aircraft, issue)
+                ),
+                "affected_mounts": (
+                    issue.affected_mounts
+                    if issue.affected_mounts
+                    else _affected_mounts(aircraft, issue)
+                ),
+                "affected_mount_ids": list(issue.affected_mount_ids),
             }
         )
 
     blocking_errors = [
         enrich(issue) for issue in validation.blocking_errors
     ]
+    physical_errors, physical_warnings = _physical_assembly_issues(aircraft)
+    for issue in physical_errors:
+        if all(existing.code != issue.code for existing in blocking_errors):
+            blocking_errors.append(issue)
+
     fit_issue = _visual_propeller_fit_issue(aircraft)
     if (
         fit_issue is not None
@@ -161,6 +256,9 @@ def augment_validation(
     return validation.model_copy(
         update={
             "blocking_errors": blocking_errors,
-            "warnings": [enrich(issue) for issue in validation.warnings],
+            "warnings": (
+                [enrich(issue) for issue in validation.warnings]
+                + physical_warnings
+            ),
         }
     )

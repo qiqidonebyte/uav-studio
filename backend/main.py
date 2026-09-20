@@ -11,6 +11,7 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
     WebSocket,
     WebSocketDisconnect,
     status,
@@ -32,12 +33,26 @@ from backend.engineering import (
     validate_configuration,
 )
 from backend.experiments import list_experiments, load_replay, save_experiment
+from backend.assembly_instances import default_assembly_instances
+from backend.aircraft_library import (
+    duplicate_name,
+    ensure_aircraft_metadata,
+    template_by_key,
+    template_definitions,
+    utc_now_iso,
+)
 from backend.component_library import register_component_library_routes
 from backend.user_settings import ensure_admin_user, register_user_settings_routes
 from backend.models import AircraftRecord, Base, ComponentRecord, SimulationRecord
 from backend.p0_validation import augment_validation
 from backend.schemas import (
+    AircraftCreateFromTemplate,
     AircraftDefinition,
+    AircraftDuplicateRequest,
+    AircraftLibraryItem,
+    AircraftMetadataUpdate,
+    AircraftTemplate,
+    AssemblyInstance,
     AssemblyState,
     Component,
     ComponentType,
@@ -67,7 +82,7 @@ def _component_from_record(record: ComponentRecord) -> Component:
 
 
 def _aircraft_from_record(record: AircraftRecord) -> AircraftDefinition:
-    return AircraftDefinition(
+    base = AircraftDefinition(
         id=record.id,
         name=record.name,
         frame_id=record.frame_id,
@@ -94,7 +109,23 @@ def _aircraft_from_record(record: AircraftRecord) -> AircraftDefinition:
             if record.payload_position_json is not None
             else None
         ),
+        assembly_instances=(
+            [
+                AssemblyInstance.model_validate(item)
+                for item in record.assembly_instances_json
+            ]
+            if isinstance(record.assembly_instances_json, list)
+            else []
+        ),
     )
+    # Existing databases have NULL in the new additive column. Treat them as
+    # the old "fully assembled from slot IDs" state, then persist explicit
+    # physical instances on the next edit.
+    if record.assembly_instances_json is None:
+        return base.model_copy(
+            update={"assembly_instances": default_assembly_instances(base)}
+        )
+    return base
 
 
 def _catalog(session: Session) -> dict[int, Component]:
@@ -124,6 +155,52 @@ def _assembly_state(
     )
 
 
+def _record_timestamp(record: AircraftRecord, field: str) -> str:
+    value = getattr(record, field, None)
+    if isinstance(value, str) and value:
+        return value
+    return utc_now_iso()
+
+
+def _aircraft_library_item(
+    record: AircraftRecord,
+    session: Session,
+) -> AircraftLibraryItem:
+    state = _assembly_state(_aircraft_from_record(record), session)
+    experiment_count = (
+        session.scalar(
+            select(func.count(SimulationRecord.id)).where(
+                SimulationRecord.aircraft_id == record.id
+            )
+        )
+        or 0
+    )
+    return AircraftLibraryItem(
+        aircraft=state.aircraft,
+        engineering=state.engineering,
+        validation=state.validation,
+        description=record.description or "",
+        created_at=_record_timestamp(record, "created_at"),
+        updated_at=_record_timestamp(record, "updated_at"),
+        experiment_count=experiment_count,
+    )
+
+
+def _touch_new_aircraft(record: AircraftRecord, description: str = "") -> None:
+    now = utc_now_iso()
+    record.description = description
+    record.created_at = now
+    record.updated_at = now
+
+
+def _touch_aircraft(record: AircraftRecord) -> None:
+    if not record.created_at:
+        record.created_at = utc_now_iso()
+    record.updated_at = utc_now_iso()
+
+
+
+
 def _update_aircraft_record(
     record: AircraftRecord,
     aircraft: AircraftDefinition,
@@ -149,6 +226,16 @@ def _update_aircraft_record(
         if aircraft.payload_position_m is not None
         else None
     )
+    physical_instances = (
+        aircraft.assembly_instances
+        if "assembly_instances" in aircraft.model_fields_set
+        else default_assembly_instances(aircraft)
+    )
+    record.assembly_instances_json = [
+        item.model_dump()
+        for item in physical_instances
+    ]
+    _touch_aircraft(record)
 
 
 def create_app(
@@ -166,6 +253,7 @@ def create_app(
         ensure_schema_compatibility(engine)
         with session_factory() as session:
             seed_database(session)
+            ensure_aircraft_metadata(session)
             ensure_admin_user(session)
             next_simulation_id = (
                 session.scalar(select(func.max(SimulationRecord.id))) or 0
@@ -219,6 +307,151 @@ def create_app(
         ).all()
         return [_component_from_record(record) for record in records]
 
+    @app.get("/api/aircraft", response_model=list[AircraftLibraryItem])
+    def list_aircraft(
+        session: Session = Depends(get_db),
+    ) -> list[AircraftLibraryItem]:
+        records = session.scalars(
+            select(AircraftRecord).order_by(
+                AircraftRecord.updated_at.desc(),
+                AircraftRecord.id.desc(),
+            )
+        ).all()
+        return [_aircraft_library_item(record, session) for record in records]
+
+    @app.get("/api/aircraft/templates", response_model=list[AircraftTemplate])
+    def get_aircraft_templates() -> list[AircraftTemplate]:
+        return template_definitions()
+
+    @app.post(
+        "/api/aircraft/from-template/{template_key}",
+        response_model=AircraftLibraryItem,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_aircraft_from_template(
+        template_key: str,
+        command: AircraftCreateFromTemplate,
+        session: Session = Depends(get_db),
+    ) -> AircraftLibraryItem:
+        template = template_by_key(template_key)
+        if template is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="飞机模板不存在",
+            )
+
+        aircraft = template.aircraft.model_copy(
+            update={
+                "id": None,
+                "name": command.name or template.aircraft.name,
+            }
+        )
+        record = AircraftRecord()
+        _update_aircraft_record(record, aircraft)
+        _touch_new_aircraft(record, command.description)
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return _aircraft_library_item(record, session)
+
+    @app.post(
+        "/api/aircraft/{aircraft_id}/duplicate",
+        response_model=AircraftLibraryItem,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def duplicate_aircraft(
+        aircraft_id: int,
+        command: AircraftDuplicateRequest,
+        session: Session = Depends(get_db),
+    ) -> AircraftLibraryItem:
+        source = session.get(AircraftRecord, aircraft_id)
+        if source is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="飞机不存在",
+            )
+        aircraft = _aircraft_from_record(source).model_copy(
+            update={
+                "id": None,
+                "name": command.name or duplicate_name(source.name),
+            }
+        )
+        record = AircraftRecord()
+        _update_aircraft_record(record, aircraft)
+        _touch_new_aircraft(
+            record,
+            source.description or "",
+        )
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return _aircraft_library_item(record, session)
+
+    @app.patch(
+        "/api/aircraft/{aircraft_id}/metadata",
+        response_model=AircraftLibraryItem,
+    )
+    def update_aircraft_metadata(
+        aircraft_id: int,
+        command: AircraftMetadataUpdate,
+        session: Session = Depends(get_db),
+    ) -> AircraftLibraryItem:
+        record = session.get(AircraftRecord, aircraft_id)
+        if record is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="飞机不存在",
+            )
+        if command.name is not None:
+            record.name = command.name.strip()
+        if command.description is not None:
+            record.description = command.description.strip()
+        _touch_aircraft(record)
+        session.commit()
+        session.refresh(record)
+        return _aircraft_library_item(record, session)
+
+    @app.delete(
+        "/api/aircraft/{aircraft_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        response_class=Response,
+        response_model=None,
+    )
+    def delete_aircraft(
+        aircraft_id: int,
+        session: Session = Depends(get_db),
+    ) -> Response:
+        record = session.get(AircraftRecord, aircraft_id)
+        if record is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="飞机不存在",
+            )
+        aircraft_count = (
+            session.scalar(select(func.count(AircraftRecord.id))) or 0
+        )
+        if aircraft_count <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="至少保留一架飞机设计",
+            )
+        experiment_count = (
+            session.scalar(
+                select(func.count(SimulationRecord.id)).where(
+                    SimulationRecord.aircraft_id == aircraft_id
+                )
+            )
+            or 0
+        )
+        if experiment_count > 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="该飞机已有实验记录。为保证实验可追溯，不能删除；可以保留或复制后继续设计。",
+            )
+        session.delete(record)
+        session.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     @app.get("/api/aircraft/{aircraft_id}", response_model=AssemblyState)
     def get_aircraft(
         aircraft_id: int,
@@ -243,6 +476,7 @@ def create_app(
     ) -> AssemblyState:
         record = AircraftRecord()
         _update_aircraft_record(record, aircraft)
+        _touch_new_aircraft(record)
         session.add(record)
         session.commit()
         session.refresh(record)

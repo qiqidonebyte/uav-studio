@@ -29,6 +29,7 @@ export interface LoadedVisualAsset {
 }
 
 export interface ExplodedVisualPart {
+  mountId: string
   slot: AssemblySlot
   componentId: number | null
   motorName?: MotorName
@@ -47,6 +48,27 @@ export interface ExplodedVisualLabel {
   top: number
   selected: boolean
   issue: boolean
+}
+
+export interface AssemblyMountVisual {
+  id: string
+  slot: AssemblySlot
+  label: string
+  position: VisualVector3
+  required: boolean
+  motorName?: MotorName
+}
+
+export interface PartInstanceVisual extends ExplodedVisualPart {
+  installProgress: number
+}
+
+export interface SpatialDiagnosticVisual {
+  code: string
+  severity: 'error' | 'warning'
+  message: string
+  slots: AssemblySlot[]
+  mountIds: string[]
 }
 
 export interface UavVisualTestProbe {
@@ -72,4 +94,11 @@ export interface UavVisualTestProbe {
   directionLabelsVisible: boolean
   explodedParts: ExplodedVisualPart[]
   explodedLabels: ExplodedVisualLabel[]
+  mountPoints: AssemblyMountVisual[]
+  partInstances: PartInstanceVisual[]
+  pendingInstall: { slot: AssemblySlot; componentId: number } | null
+  hoveredMountId: string | null
+  selectedMountId: string | null
+  spatialDiagnostics: SpatialDiagnosticVisual[]
+  activeInstallation: { mountId: string; progress: number; serial: number; mode: 'install' | 'remove' } | null
 }

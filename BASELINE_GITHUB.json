@@ -1,12 +1,21 @@
 {
   "repository": "qiqidonebyte/uav-studio",
   "branch": "main",
-  "head": "df88d9e3e4cb02138cbda1cbf631c7fdc2bad4d2",
-  "verified_base_blobs": {
-    "frontend/src/components/DroneScene.vue": "887dc0ec14049f18cdd84e9ad22606a73a64fc1d",
-    "frontend/src/three/AircraftRenderer.ts": "063bf3443a3d86da985e9feb848cdf75a209901b",
-    "frontend/src/types/visual-test.d.ts": "c3295155df19c3da869bea2f1064191c99ada922",
-    "frontend/tests/p0-scene-contract.mjs": "720e0f448cae75de269360ef14da43acac507edb",
-    "frontend/tests/p0-visual-capture.mjs": "3703c3d1b7fc888f32b1b930b5ceacc142463b8e"
+  "head": "61a9a82e5c49f039d9b741438b721fd04c5230ab",
+  "head_message": "feat: fix propeller overlap and update realistic assets",
+  "source_blobs": {
+    "frontend/src/components/ComponentCard.vue": "33f4fa039ea3869944fecc42777cf21f622986d5",
+    "frontend/package.json": "35b03412110affd12924c2f16e47082d5c4fb9ba",
+    "backend/models.py": "d6a636dea781ad3956a32e8c6c1c063098b01a3c",
+    "backend/main.py": "c12ea42c8e67232382008ec88bd8621f8ea72eaf",
+    "backend/schemas.py": "321d75dd33d21e3026f1f7ed0dd3e38774b6ce55",
+    "backend/database.py": "c23161fa820bcd02d8013ae099123104ac2a3555",
+    "backend/p0_validation.py": "f46b4502f73673570dbf5eebfe504ca878142357",
+    "frontend/src/views/Assembly.vue": "78776200b3bf1206142b3477ee4ae1348ec0f82f",
+    "frontend/src/stores/assembly.ts": "c44e0c05065fe0ed98e26e815779a084fbed3803",
+    "frontend/src/types/aircraft.ts": "afe058ac4bbce0c4f9a998f9e1ca1403c3a936ea",
+    "frontend/src/utils/assembly.ts": "95b01b7913e484d101ec3a51fa147626478a58fc",
+    "frontend/src/components/DroneScene.vue": "6f1a20e842ac9179b9ef6c718d41229c3277344e",
+    "frontend/src/three/AircraftRenderer.ts": "405a7d3738e8ced26cbe958211658616187198d2"
   }
 }

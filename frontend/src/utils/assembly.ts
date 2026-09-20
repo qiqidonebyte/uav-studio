@@ -136,14 +136,16 @@ const SCENE_PART_PREFIXES: Array<[string, AssemblySlot]> = [
 ]
 
 function issuesForStep(
-  stepId: AssemblyStepId,
+  step: AssemblyStep,
   validation: AssemblyValidationResult,
 ): AssemblyIssue[] {
-  const codes = STEP_ISSUE_CODES[stepId]
-  if (!codes) return []
-  return [...validation.blocking_errors, ...validation.warnings].filter(issue =>
-    codes.includes(issue.code),
-  )
+  const codes = STEP_ISSUE_CODES[step.id] ?? []
+  return [...validation.blocking_errors, ...validation.warnings].filter(issue => {
+    if (codes.includes(issue.code)) return true
+    return Boolean(
+      issue.affected_slots?.some(slot => step.slots.includes(slot)),
+    )
+  })
 }
 
 export function isSlotInstalled(
@@ -169,7 +171,7 @@ export function getStepStatus(
     return 'pending'
   }
 
-  const issues = issuesForStep(step.id, validation)
+  const issues = issuesForStep(step, validation)
   if (issues.some(issue => issue.severity === 'error')) return 'error'
   if (issues.some(issue => issue.severity === 'warning')) return 'warning'
   return 'done'

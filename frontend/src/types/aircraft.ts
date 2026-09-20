@@ -41,6 +41,12 @@ export interface Component {
   visual?: ComponentVisual | null
 }
 
+export interface AssemblyInstance {
+  mount_id: string
+  slot: ComponentType
+  component_id: number
+}
+
 export interface AircraftDefinition {
   id?: number
   name: string
@@ -56,6 +62,11 @@ export interface AircraftDefinition {
   gnss_position_m?: Vector3Value | null
   payload_position_m?: Vector3Value | null
   propeller_directions?: Record<MotorName, PropellerDirection> | null
+  /**
+   * Physical 3D assembly state. Legacy aircraft without this field are treated
+   * as fully assembled from their slot-level component IDs.
+   */
+  assembly_instances?: AssemblyInstance[]
 }
 
 export interface InertiaEstimate {
@@ -68,6 +79,9 @@ export interface AssemblyIssue {
   code: string
   severity: 'error' | 'warning'
   message: string
+  affected_slots?: ComponentType[]
+  affected_mounts?: MotorName[]
+  affected_mount_ids?: string[]
 }
 
 export interface AssemblyValidationResult {
@@ -102,4 +116,27 @@ export interface AssemblyState {
   aircraft: AircraftDefinition
   engineering: AircraftEngineeringSummary | null
   validation: AssemblyValidationResult
+}
+
+
+export interface AircraftLibraryItem {
+  aircraft: AircraftDefinition
+  engineering: AircraftEngineeringSummary | null
+  validation: AssemblyValidationResult
+  description: string
+  created_at: string
+  updated_at: string
+  experiment_count: number
+}
+
+export interface AircraftTemplate {
+  key: string
+  name: string
+  description: string
+  aircraft: AircraftDefinition
+}
+
+export interface AircraftMetadataUpdate {
+  name?: string
+  description?: string
 }
