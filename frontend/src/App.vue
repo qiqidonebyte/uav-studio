@@ -1,5 +1,7 @@
 <template>
-  <div class="app-shell">
+  <RouterView v-if="!authStore.authenticated" />
+
+  <div v-else class="app-shell">
     <header class="topbar">
       <div class="brand brand-campus">
         <img class="campus-mark" src="/branding/zjitc-campus-mark.svg" alt="浙江工贸" />
@@ -33,7 +35,11 @@
           <span class="design-switcher-arrow" aria-hidden="true">›</span>
         </RouterLink>
         <span class="status-pill info">{{ simulationStore.simulationStatusZh }}</span>
-        <RouterLink class="user-chip" to="/settings" title="账户与系统设置">{{ settingsStore.username }}</RouterLink>
+        <RouterLink class="user-chip" to="/settings" title="账户与系统设置">
+          <span>{{ authStore.user?.display_name || authStore.user?.username }}</span>
+          <small>{{ roleLabel }}</small>
+        </RouterLink>
+        <button class="logout-chip" title="退出登录" @click="logout">退出</button>
       </div>
     </header>
     <RouterView />
@@ -41,14 +47,24 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { useAuthStore } from './stores/auth'
 import { useAssemblyStore } from './stores/assembly'
 import { useSimulationStore } from './stores/simulation'
 import { useSettingsStore } from './stores/settings'
 
+const router = useRouter()
+const authStore = useAuthStore()
 const simulationStore = useSimulationStore()
 const assemblyStore = useAssemblyStore()
 const settingsStore = useSettingsStore()
+
+const roleLabel = computed(() => {
+  if (authStore.user?.role === 'admin') return '管理员'
+  if (authStore.user?.role === 'teacher') return '教师'
+  return '学生'
+})
 
 const saveTitle = computed(() => {
   if (assemblyStore.saveStatus === 'saving') return '设计正在自动保存到本地 SQLite'
@@ -59,11 +75,46 @@ const saveTitle = computed(() => {
     : '当前设计已保存'
 })
 
-onMounted(() => {
-  void Promise.all([
+async function initializeWorkspace(): Promise<void> {
+  if (!authStore.authenticated) return
+  await Promise.all([
     assemblyStore.initialize(),
     settingsStore.initialize(),
   ])
+}
+
+async function logout(): Promise<void> {
+  simulationStore.resetForLogout()
+  try {
+    await authStore.logout()
+  } finally {
+    assemblyStore.resetWorkspace()
+    settingsStore.resetForLogout()
+    await router.replace('/login')
+  }
+}
+
+function onAuthExpired(): void {
+  if (!authStore.authenticated) return
+  authStore.clearSession()
+  simulationStore.resetForLogout()
+  assemblyStore.resetWorkspace()
+  settingsStore.resetForLogout()
+  void router.replace({ path: '/login', query: { expired: '1' } })
+}
+
+watch(
+  () => authStore.user?.id,
+  () => { void initializeWorkspace() },
+  { immediate: true },
+)
+
+onMounted(() => {
+  globalThis.addEventListener?.('uav-auth-expired', onAuthExpired)
+})
+
+onBeforeUnmount(() => {
+  globalThis.removeEventListener?.('uav-auth-expired', onAuthExpired)
 })
 </script>
 
@@ -76,72 +127,23 @@ onMounted(() => {
 .brand-mainline span { flex:0 0 auto; padding:1px 6px; border-radius:999px; border:1px solid rgba(98,205,238,.24); background:rgba(51,179,222,.12); color:#8ae8ff; font-size:9px; line-height:15px; font-weight:700; }
 .brand-copy small { display:block; min-width:0; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:rgba(222,233,249,.72); font-size:9px; line-height:12px; font-weight:500; }
 .aircraft-link { text-decoration:none; }
-.design-switcher {
-  display:flex;
-  align-items:center;
-  gap:9px;
-  min-width:0;
-  min-height:38px;
-  padding:4px 8px 4px 11px;
-  border-radius:10px;
-  transition:background .18s ease, border-color .18s ease, transform .18s ease;
-}
-.design-switcher:hover {
-  transform:translateY(-1px);
-  border-color:rgba(103,232,249,.28);
-  background:rgba(255,255,255,.10);
-}
-.design-switcher.router-link-active {
-  border-color:rgba(103,232,249,.30);
-  background:rgba(8,145,178,.13);
-}
-.design-switcher-copy {
-  min-width:0;
-  display:grid;
-  gap:1px;
-  text-align:left;
-}
-.design-switcher-copy b {
-  color:#f2f8ff;
-  font-size:10px;
-  line-height:13px;
-  font-weight:800;
-}
-.design-switcher-copy small {
-  max-width:150px;
-  overflow:hidden;
-  color:rgba(220,236,255,.68);
-  font-size:8px;
-  line-height:11px;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-}
-.design-switcher-arrow {
-  color:rgba(207,250,254,.75);
-  font-size:16px;
-  line-height:1;
-}
-.save-pill {
-  display:inline-flex;
-  align-items:center;
-  gap:5px;
-  height:24px;
-  padding:0 7px;
-  border:1px solid rgba(125,149,182,.20);
-  border-radius:999px;
-  background:rgba(255,255,255,.05);
-  color:#dcecff;
-  font-size:9px;
-  font-weight:700;
-  white-space:nowrap;
-}
+.design-switcher {display:flex;align-items:center;gap:9px;min-width:0;min-height:38px;padding:4px 8px 4px 11px;border-radius:10px;transition:background .18s ease,border-color .18s ease,transform .18s ease}
+.design-switcher:hover {transform:translateY(-1px);border-color:rgba(103,232,249,.28);background:rgba(255,255,255,.10)}
+.design-switcher.router-link-active {border-color:rgba(103,232,249,.30);background:rgba(8,145,178,.13)}
+.design-switcher-copy {min-width:0;display:grid;gap:1px;text-align:left}
+.design-switcher-copy b {color:#f2f8ff;font-size:10px;line-height:13px;font-weight:800}
+.design-switcher-copy small {max-width:150px;overflow:hidden;color:rgba(220,236,255,.68);font-size:8px;line-height:11px;text-overflow:ellipsis;white-space:nowrap}
+.design-switcher-arrow {color:rgba(207,250,254,.75);font-size:16px;line-height:1}
+.save-pill {display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 7px;border:1px solid rgba(125,149,182,.20);border-radius:999px;background:rgba(255,255,255,.05);color:#dcecff;font-size:9px;font-weight:700;white-space:nowrap}
 .save-pill i { width:6px; height:6px; border-radius:50%; background:#61d394; }
 .save-pill.saving i { background:#64b5ff; animation:savePulse 1s ease-in-out infinite; }
 .save-pill.error { color:#ffd8d2; border-color:rgba(248,113,113,.25); }
 .save-pill.error i { background:#fb7185; }
-.user-chip { display:grid; place-items:center; min-width:38px; height:30px; padding:0 9px; border:1px solid rgba(151,177,211,.20); border-radius:999px; background:rgba(255,255,255,.07); color:#dcecff; text-decoration:none; font-size:10px; font-weight:700; }
+.user-chip {display:flex;align-items:center;gap:5px;min-width:48px;height:30px;padding:0 9px;border:1px solid rgba(151,177,211,.20);border-radius:999px;background:rgba(255,255,255,.07);color:#dcecff;text-decoration:none;font-size:9px;font-weight:700}
+.user-chip small {padding:1px 4px;border-radius:999px;background:rgba(255,255,255,.08);color:rgba(220,236,255,.64);font-size:7px}
 .user-chip.router-link-active { border-color:rgba(103,232,249,.28); color:#cffafe; background:rgba(8,145,178,.12); }
+.logout-chip{height:30px;border:1px solid rgba(151,177,211,.18);border-radius:999px;background:transparent;color:rgba(220,236,255,.72);padding:0 8px;font-size:8px;font-weight:700;cursor:pointer}.logout-chip:hover{border-color:rgba(248,113,113,.3);background:rgba(248,113,113,.08);color:#ffd6d1}
 @keyframes savePulse { 50% { opacity:.45; transform:scale(.75); } }
 @media(max-width:1400px){.design-switcher .save-pill{display:none}.topbar nav{gap:6px}.topbar nav a{padding:0 8px}}
-@media(max-width:1280px){.brand-mainline span{display:none}.user-chip{display:none}}
+@media(max-width:1280px){.brand-mainline span{display:none}.user-chip small,.logout-chip{display:none}}
 </style>

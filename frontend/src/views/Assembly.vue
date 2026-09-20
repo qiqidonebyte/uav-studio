@@ -130,7 +130,12 @@
             <i></i>{{ store.saveStatusZh }}
           </span>
           <RouterLink class="stage-library-link" to="/aircraft">我的飞机</RouterLink>
-          <button class="stage-copy-button" :disabled="store.saving" @click="saveAsCopy()">
+          <button
+            class="stage-copy-button"
+            :disabled="store.saving || !store.canCreateAircraft"
+            :title="store.canCreateAircraft ? '复制当前飞机为独立设计' : `已达到 ${store.aircraftLimit} 架上限`"
+            @click="saveAsCopy()"
+          >
             另存为副本
           </button>
           <div class="stage-live-state">
@@ -591,10 +596,18 @@ function focusSpatialDiagnostic(diagnostic: SpatialDiagnostic): void {
 
 async function saveAsCopy(): Promise<void> {
   if (!store.aircraft) return
+  if (!store.canCreateAircraft) {
+    globalThis.alert?.(`每个账号最多保存 ${store.aircraftLimit} 架飞机。`)
+    return
+  }
   const suggested = `${store.aircraft.name} - 副本`
   const name = globalThis.prompt?.('另存为新的飞机设计', suggested)
   if (name === null) return
-  await store.duplicateActive(name?.trim() || suggested)
+  try {
+    await store.duplicateActive(name?.trim() || suggested)
+  } catch (error) {
+    globalThis.alert?.(error instanceof Error ? error.message : '另存为失败')
+  }
 }
 
 function componentTypeLabel(type: ComponentType): string {

@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import os
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Callable, Iterator, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -66,7 +67,11 @@ class UserSettings(MutableModel):
 
 
 class UserInfo(MutableModel):
+    id: int
     username: str
+    display_name: str
+    role: str
+    aircraft_limit: int = 10
 
 
 class PasswordChangeRequest(MutableModel):
@@ -151,7 +156,11 @@ def ensure_admin_user(session: Session) -> UserRecord:
     if record is None:
         record = UserRecord(
             username=DEFAULT_USERNAME,
-            password_hash=hash_password(DEFAULT_PASSWORD),
+            password_hash=hash_password(os.getenv("UAV_ADMIN_PASSWORD", DEFAULT_PASSWORD)),
+            display_name="Administrator",
+            role="admin",
+            is_active=1,
+            created_at=datetime.now(timezone.utc).isoformat(),
             settings_json=default_settings_dict(),
         )
         session.add(record)
@@ -159,22 +168,40 @@ def ensure_admin_user(session: Session) -> UserRecord:
         session.refresh(record)
         return record
 
+    changed = False
     merged = _merge_defaults(default_settings_dict(), record.settings_json)
     validated = UserSettings.model_validate(merged).model_dump(mode="json")
     if validated != record.settings_json:
         record.settings_json = validated
+        changed = True
+    if not record.display_name:
+        record.display_name = "Administrator"
+        changed = True
+    if record.role != "admin":
+        record.role = "admin"
+        changed = True
+    if record.is_active is None:
+        record.is_active = 1
+        changed = True
+    if not record.created_at:
+        record.created_at = datetime.now(timezone.utc).isoformat()
+        changed = True
+    if changed:
         session.commit()
         session.refresh(record)
     return record
 
 
-def read_settings(session: Session) -> UserSettings:
-    record = ensure_admin_user(session)
-    return UserSettings.model_validate(record.settings_json)
+def read_settings(record: UserRecord) -> UserSettings:
+    merged = _merge_defaults(default_settings_dict(), record.settings_json)
+    return UserSettings.model_validate(merged)
 
 
-def write_settings(session: Session, settings: UserSettings) -> UserSettings:
-    record = ensure_admin_user(session)
+def write_settings(
+    session: Session,
+    record: UserRecord,
+    settings: UserSettings,
+) -> UserSettings:
     record.settings_json = settings.model_dump(mode="json")
     session.commit()
     session.refresh(record)
@@ -183,10 +210,10 @@ def write_settings(session: Session, settings: UserSettings) -> UserSettings:
 
 def change_password(
     session: Session,
+    record: UserRecord,
     current_password: str,
     new_password: str,
 ) -> None:
-    record = ensure_admin_user(session)
     if not verify_password(current_password, record.password_hash):
         raise ValueError("当前密码不正确")
     record.password_hash = hash_password(new_password)
@@ -196,19 +223,32 @@ def change_password(
 def register_user_settings_routes(
     app: FastAPI,
     get_db: Callable[..., Iterator[Session]],
+    get_current_user: Callable[..., UserRecord],
 ) -> None:
     @app.get("/api/user/me", response_model=UserInfo)
-    def get_current_user(session: Session = Depends(get_db)) -> UserInfo:
-        record = ensure_admin_user(session)
-        return UserInfo(username=record.username)
+    def get_user(
+        record: UserRecord = Depends(get_current_user),
+    ) -> UserInfo:
+        return UserInfo(
+            id=record.id,
+            username=record.username,
+            display_name=record.display_name or record.username,
+            role=record.role or "student",
+        )
 
     @app.put("/api/user/password", response_model=PasswordChangeResult)
     def update_password(
         command: PasswordChangeRequest,
         session: Session = Depends(get_db),
+        record: UserRecord = Depends(get_current_user),
     ) -> PasswordChangeResult:
         try:
-            change_password(session, command.current_password, command.new_password)
+            change_password(
+                session,
+                record,
+                command.current_password,
+                command.new_password,
+            )
         except ValueError as error:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -217,12 +257,15 @@ def register_user_settings_routes(
         return PasswordChangeResult(ok=True)
 
     @app.get("/api/settings", response_model=UserSettings)
-    def get_settings(session: Session = Depends(get_db)) -> UserSettings:
-        return read_settings(session)
+    def get_settings(
+        record: UserRecord = Depends(get_current_user),
+    ) -> UserSettings:
+        return read_settings(record)
 
     @app.put("/api/settings", response_model=UserSettings)
     def update_settings(
         settings: UserSettings,
         session: Session = Depends(get_db),
+        record: UserRecord = Depends(get_current_user),
     ) -> UserSettings:
-        return write_settings(session, settings)
+        return write_settings(session, record, settings)

@@ -6,10 +6,15 @@ import History from '../views/History.vue'
 import Replay from '../views/Replay.vue'
 import ComponentLibrary from '../views/ComponentLibrary.vue'
 import Settings from '../views/Settings.vue'
+import Login from '../views/Login.vue'
+import Register from '../views/Register.vue'
+import { useAuthStore } from '../stores/auth'
 
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
+    { path: '/login', component: Login, meta: { public: true } },
+    { path: '/register', component: Register, meta: { public: true } },
     { path: '/', redirect: '/aircraft' },
     { path: '/aircraft', component: AircraftLibrary },
     { path: '/assembly', component: Assembly },
@@ -19,4 +24,22 @@ export const router = createRouter({
     { path: '/components', component: ComponentLibrary },
     { path: '/settings', component: Settings },
   ],
+})
+
+router.beforeEach(async to => {
+  const auth = useAuthStore()
+  await auth.initialize()
+
+  if (to.meta.public) {
+    if (auth.authenticated) return '/aircraft'
+    return true
+  }
+
+  if (!auth.authenticated) {
+    return {
+      path: '/login',
+      query: to.fullPath !== '/' ? { redirect: to.fullPath } : undefined,
+    }
+  }
+  return true
 })

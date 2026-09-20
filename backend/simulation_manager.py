@@ -33,13 +33,24 @@ class SimulationNotFoundError(KeyError):
 
 
 class SimulationManager:
+    """In-memory simulator registry.
+
+    The pre-auth V1 implementation kept one global simulation. With real user
+    accounts that would allow one browser to replace another user's session, so
+    sessions are now keyed by simulation ID while preserving the public method
+    contract used by the API and tests.
+    """
+
     def __init__(self) -> None:
-        self._session: SimulationSession | None = None
+        self._sessions: dict[int, SimulationSession] = {}
         self._next_id = 1
+        self._last_active_id: int | None = None
 
     @property
     def active_session(self) -> SimulationSession | None:
-        return self._session
+        if self._last_active_id is None:
+            return None
+        return self._sessions.get(self._last_active_id)
 
     @property
     def next_id(self) -> int:
@@ -55,23 +66,21 @@ class SimulationManager:
         engineering: AircraftEngineeringSummary,
         simulation_id: int | None = None,
     ) -> SimulationSession:
-        if self._session is not None:
-            self._session.status = "STOPPED"
-            self._session.simulator.stop()
-
         session = SimulationSession(
             id=simulation_id if simulation_id is not None else self._next_id,
             simulator=SimpleSimulator(aircraft, catalog, engineering),
         )
         self._next_id = max(self._next_id, session.id + 1)
-        self._session = session
+        self._sessions[session.id] = session
+        self._last_active_id = session.id
         session.frames.append(session.simulator.telemetry_frame())
         return session
 
     def require(self, simulation_id: int) -> SimulationSession:
-        if self._session is None or self._session.id != simulation_id:
+        session = self._sessions.get(simulation_id)
+        if session is None:
             raise SimulationNotFoundError(simulation_id)
-        return self._session
+        return session
 
     def snapshot(self, simulation_id: int):
         session = self.require(simulation_id)
@@ -102,6 +111,7 @@ class SimulationManager:
         if session.started_at is None:
             session.started_at = datetime.now(timezone.utc)
         session.status = "RUNNING"
+        self._last_active_id = session.id
         if session.task is None or session.task.done():
             session.task = asyncio.create_task(self._run_loop(session))
         return session
@@ -189,20 +199,21 @@ class SimulationManager:
         return session
 
     async def shutdown(self) -> None:
-        session = self._session
-        if session is None:
-            return
-        session.status = "STOPPED"
-        session.simulator.pause()
-        if session.task is not None and not session.task.done():
-            session.task.cancel()
-            try:
-                await session.task
-            except asyncio.CancelledError:
-                pass
+        sessions = list(self._sessions.values())
+        for session in sessions:
+            session.status = "STOPPED"
+            session.simulator.pause()
+        for session in sessions:
+            if session.task is not None and not session.task.done():
+                session.task.cancel()
+        for session in sessions:
+            if session.task is not None and not session.task.done():
+                try:
+                    await session.task
+                except asyncio.CancelledError:
+                    pass
 
     async def _run_loop(self, session: SimulationSession) -> None:
-        loop = asyncio.get_running_loop()
         next_step_at = perf_counter()
         try:
             while session.status == "RUNNING":

@@ -17,6 +17,7 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -42,8 +43,16 @@ from backend.aircraft_library import (
     utc_now_iso,
 )
 from backend.component_library import register_component_library_routes
+from backend.auth import (
+    AIRCRAFT_LIMIT_PER_USER,
+    SESSION_COOKIE_NAME,
+    ensure_legacy_aircraft_ownership,
+    register_auth_routes,
+    require_current_user,
+    session_user,
+)
 from backend.user_settings import ensure_admin_user, register_user_settings_routes
-from backend.models import AircraftRecord, Base, ComponentRecord, SimulationRecord
+from backend.models import AircraftRecord, Base, ComponentRecord, SimulationRecord, UserRecord
 from backend.p0_validation import augment_validation
 from backend.schemas import (
     AircraftCreateFromTemplate,
@@ -254,7 +263,8 @@ def create_app(
         with session_factory() as session:
             seed_database(session)
             ensure_aircraft_metadata(session)
-            ensure_admin_user(session)
+            admin = ensure_admin_user(session)
+            ensure_legacy_aircraft_ownership(session, admin)
             next_simulation_id = (
                 session.scalar(select(func.max(SimulationRecord.id))) or 0
             ) + 1
@@ -287,7 +297,94 @@ def create_app(
         with request.app.state.session_factory() as session:
             yield session
 
-    register_user_settings_routes(app, get_db)
+    @app.middleware("http")
+    async def require_login_for_api(request: Request, call_next):
+        path = request.url.path
+        public_api = {
+            "/api/health",
+            "/api/auth/login",
+            "/api/auth/register",
+        }
+        if (
+            request.method != "OPTIONS"
+            and path.startswith("/api/")
+            and path not in public_api
+        ):
+            with request.app.state.session_factory() as auth_session:
+                user = session_user(
+                    auth_session,
+                    request.cookies.get(SESSION_COOKIE_NAME),
+                )
+                if user is None:
+                    return JSONResponse(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        content={"detail": "请先登录"},
+                    )
+                request.state.user_id = user.id
+        return await call_next(request)
+
+    def get_current_user(
+        request: Request,
+        session: Session = Depends(get_db),
+    ) -> UserRecord:
+        return require_current_user(request, session)
+
+    def owned_aircraft_or_404(
+        session: Session,
+        current_user: UserRecord,
+        aircraft_id: int,
+    ) -> AircraftRecord:
+        record = session.get(AircraftRecord, aircraft_id)
+        if record is None or record.owner_user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="飞机不存在",
+            )
+        return record
+
+    def owned_aircraft_count(session: Session, current_user: UserRecord) -> int:
+        return int(
+            session.scalar(
+                select(func.count(AircraftRecord.id)).where(
+                    AircraftRecord.owner_user_id == current_user.id
+                )
+            )
+            or 0
+        )
+
+    def ensure_aircraft_capacity(
+        session: Session,
+        current_user: UserRecord,
+    ) -> None:
+        if owned_aircraft_count(session, current_user) >= AIRCRAFT_LIMIT_PER_USER:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"每个用户最多保存 {AIRCRAFT_LIMIT_PER_USER} 架飞机，请删除或整理现有设计后再创建。",
+            )
+
+    def manager_for_user_or_404(
+        simulation_id: int,
+        session: Session,
+        current_user: UserRecord,
+    ):
+        try:
+            simulation = simulation_manager.require(simulation_id)
+        except SimulationNotFoundError as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="仿真不存在",
+            ) from error
+        aircraft_id = simulation.simulator.aircraft.id
+        if not isinstance(aircraft_id, int):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="仿真不存在",
+            )
+        owned_aircraft_or_404(session, current_user, aircraft_id)
+        return simulation
+
+    register_auth_routes(app, get_db)
+    register_user_settings_routes(app, get_db, get_current_user)
     register_component_library_routes(app, get_db)
 
     @app.get("/api/health")
@@ -310,9 +407,12 @@ def create_app(
     @app.get("/api/aircraft", response_model=list[AircraftLibraryItem])
     def list_aircraft(
         session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> list[AircraftLibraryItem]:
         records = session.scalars(
-            select(AircraftRecord).order_by(
+            select(AircraftRecord)
+            .where(AircraftRecord.owner_user_id == current_user.id)
+            .order_by(
                 AircraftRecord.updated_at.desc(),
                 AircraftRecord.id.desc(),
             )
@@ -332,7 +432,9 @@ def create_app(
         template_key: str,
         command: AircraftCreateFromTemplate,
         session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> AircraftLibraryItem:
+        ensure_aircraft_capacity(session, current_user)
         template = template_by_key(template_key)
         if template is None:
             raise HTTPException(
@@ -346,7 +448,7 @@ def create_app(
                 "name": command.name or template.aircraft.name,
             }
         )
-        record = AircraftRecord()
+        record = AircraftRecord(owner_user_id=current_user.id)
         _update_aircraft_record(record, aircraft)
         _touch_new_aircraft(record, command.description)
         session.add(record)
@@ -363,20 +465,17 @@ def create_app(
         aircraft_id: int,
         command: AircraftDuplicateRequest,
         session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> AircraftLibraryItem:
-        source = session.get(AircraftRecord, aircraft_id)
-        if source is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="飞机不存在",
-            )
+        source = owned_aircraft_or_404(session, current_user, aircraft_id)
+        ensure_aircraft_capacity(session, current_user)
         aircraft = _aircraft_from_record(source).model_copy(
             update={
                 "id": None,
                 "name": command.name or duplicate_name(source.name),
             }
         )
-        record = AircraftRecord()
+        record = AircraftRecord(owner_user_id=current_user.id)
         _update_aircraft_record(record, aircraft)
         _touch_new_aircraft(
             record,
@@ -395,13 +494,9 @@ def create_app(
         aircraft_id: int,
         command: AircraftMetadataUpdate,
         session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> AircraftLibraryItem:
-        record = session.get(AircraftRecord, aircraft_id)
-        if record is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="飞机不存在",
-            )
+        record = owned_aircraft_or_404(session, current_user, aircraft_id)
         if command.name is not None:
             record.name = command.name.strip()
         if command.description is not None:
@@ -420,16 +515,10 @@ def create_app(
     def delete_aircraft(
         aircraft_id: int,
         session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> Response:
-        record = session.get(AircraftRecord, aircraft_id)
-        if record is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="飞机不存在",
-            )
-        aircraft_count = (
-            session.scalar(select(func.count(AircraftRecord.id))) or 0
-        )
+        record = owned_aircraft_or_404(session, current_user, aircraft_id)
+        aircraft_count = owned_aircraft_count(session, current_user)
         if aircraft_count <= 1:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -456,13 +545,9 @@ def create_app(
     def get_aircraft(
         aircraft_id: int,
         session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> AssemblyState:
-        record = session.get(AircraftRecord, aircraft_id)
-        if record is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="飞机不存在",
-            )
+        record = owned_aircraft_or_404(session, current_user, aircraft_id)
         return _assembly_state(_aircraft_from_record(record), session)
 
     @app.post(
@@ -473,8 +558,10 @@ def create_app(
     def create_aircraft(
         aircraft: AircraftDefinition,
         session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> AssemblyState:
-        record = AircraftRecord()
+        ensure_aircraft_capacity(session, current_user)
+        record = AircraftRecord(owner_user_id=current_user.id)
         _update_aircraft_record(record, aircraft)
         _touch_new_aircraft(record)
         session.add(record)
@@ -487,13 +574,9 @@ def create_app(
         aircraft_id: int,
         aircraft: AircraftDefinition,
         session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> AssemblyState:
-        record = session.get(AircraftRecord, aircraft_id)
-        if record is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="飞机不存在",
-            )
+        record = owned_aircraft_or_404(session, current_user, aircraft_id)
         _update_aircraft_record(record, aircraft)
         session.commit()
         session.refresh(record)
@@ -506,23 +589,10 @@ def create_app(
     def calculate_aircraft(
         aircraft_id: int,
         session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> AssemblyState:
-        record = session.get(AircraftRecord, aircraft_id)
-        if record is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="飞机不存在",
-            )
+        record = owned_aircraft_or_404(session, current_user, aircraft_id)
         return _assembly_state(_aircraft_from_record(record), session)
-
-    def manager_or_404(simulation_id: int):
-        try:
-            return simulation_manager.require(simulation_id)
-        except SimulationNotFoundError as error:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="仿真不存在",
-            ) from error
 
     def command_error(error: ValueError) -> HTTPException:
         return HTTPException(
@@ -538,13 +608,11 @@ def create_app(
     def create_simulation(
         command: SimulationCreateRequest,
         session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> SimulationSnapshot:
-        record = session.get(AircraftRecord, command.aircraft_id)
-        if record is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="飞机不存在",
-            )
+        record = owned_aircraft_or_404(
+            session, current_user, command.aircraft_id
+        )
         aircraft = _aircraft_from_record(record)
         catalog = _catalog(session)
         validation = augment_validation(
@@ -572,8 +640,12 @@ def create_app(
         "/api/simulations/{simulation_id}",
         response_model=SimulationSnapshot,
     )
-    def get_simulation(simulation_id: int) -> SimulationSnapshot:
-        manager_or_404(simulation_id)
+    def get_simulation(
+        simulation_id: int,
+        session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
+    ) -> SimulationSnapshot:
+        manager_for_user_or_404(simulation_id, session, current_user)
         return SimulationSnapshot.model_validate(
             simulation_manager.snapshot(simulation_id)
         )
@@ -582,8 +654,12 @@ def create_app(
         "/api/simulations/{simulation_id}/start",
         response_model=SimulationSnapshot,
     )
-    async def start_simulation(simulation_id: int) -> SimulationSnapshot:
-        manager_or_404(simulation_id)
+    async def start_simulation(
+        simulation_id: int,
+        session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
+    ) -> SimulationSnapshot:
+        manager_for_user_or_404(simulation_id, session, current_user)
         simulation_manager.start(simulation_id)
         return SimulationSnapshot.model_validate(
             simulation_manager.snapshot(simulation_id)
@@ -593,8 +669,12 @@ def create_app(
         "/api/simulations/{simulation_id}/pause",
         response_model=SimulationSnapshot,
     )
-    def pause_simulation(simulation_id: int) -> SimulationSnapshot:
-        manager_or_404(simulation_id)
+    def pause_simulation(
+        simulation_id: int,
+        session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
+    ) -> SimulationSnapshot:
+        manager_for_user_or_404(simulation_id, session, current_user)
         simulation_manager.pause(simulation_id)
         return SimulationSnapshot.model_validate(
             simulation_manager.snapshot(simulation_id)
@@ -604,8 +684,12 @@ def create_app(
         "/api/simulations/{simulation_id}/reset",
         response_model=SimulationSnapshot,
     )
-    def reset_simulation(simulation_id: int) -> SimulationSnapshot:
-        manager_or_404(simulation_id)
+    def reset_simulation(
+        simulation_id: int,
+        session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
+    ) -> SimulationSnapshot:
+        manager_for_user_or_404(simulation_id, session, current_user)
         simulation_manager.reset(simulation_id)
         return SimulationSnapshot.model_validate(
             simulation_manager.snapshot(simulation_id)
@@ -618,8 +702,9 @@ def create_app(
     def stop_simulation(
         simulation_id: int,
         request_session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> SimulationSnapshot:
-        manager_or_404(simulation_id)
+        manager_for_user_or_404(simulation_id, request_session, current_user)
         active_simulation = simulation_manager.stop(simulation_id)
         save_experiment(
             active_simulation,
@@ -635,8 +720,12 @@ def create_app(
         "/api/simulations/{simulation_id}/arm",
         response_model=SimulationSnapshot,
     )
-    def arm_simulation(simulation_id: int) -> SimulationSnapshot:
-        manager_or_404(simulation_id)
+    def arm_simulation(
+        simulation_id: int,
+        session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
+    ) -> SimulationSnapshot:
+        manager_for_user_or_404(simulation_id, session, current_user)
         try:
             simulation_manager.arm(simulation_id)
         except ValueError as error:
@@ -652,8 +741,10 @@ def create_app(
     def takeoff_simulation(
         simulation_id: int,
         command: TakeoffCommand,
+        session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> SimulationSnapshot:
-        manager_or_404(simulation_id)
+        manager_for_user_or_404(simulation_id, session, current_user)
         try:
             simulation_manager.takeoff(simulation_id, command.altitude_m)
         except ValueError as error:
@@ -666,8 +757,12 @@ def create_app(
         "/api/simulations/{simulation_id}/land",
         response_model=SimulationSnapshot,
     )
-    def land_simulation(simulation_id: int) -> SimulationSnapshot:
-        manager_or_404(simulation_id)
+    def land_simulation(
+        simulation_id: int,
+        session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
+    ) -> SimulationSnapshot:
+        manager_for_user_or_404(simulation_id, session, current_user)
         try:
             simulation_manager.land(simulation_id)
         except ValueError as error:
@@ -683,8 +778,10 @@ def create_app(
     def set_simulation_wind(
         simulation_id: int,
         command: WindCommand,
+        session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> SimulationSnapshot:
-        manager_or_404(simulation_id)
+        manager_for_user_or_404(simulation_id, session, current_user)
         try:
             simulation_manager.set_wind(
                 simulation_id,
@@ -704,8 +801,10 @@ def create_app(
     def set_simulation_target(
         simulation_id: int,
         command: TargetCommand,
+        session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> SimulationSnapshot:
-        manager_or_404(simulation_id)
+        manager_for_user_or_404(simulation_id, session, current_user)
         try:
             simulation_manager.set_target(
                 simulation_id,
@@ -725,8 +824,10 @@ def create_app(
     def set_simulation_waypoints(
         simulation_id: int,
         command: WaypointCommand,
+        session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> SimulationSnapshot:
-        manager_or_404(simulation_id)
+        manager_for_user_or_404(simulation_id, session, current_user)
         try:
             simulation_manager.set_waypoints(
                 simulation_id,
@@ -747,8 +848,9 @@ def create_app(
     )
     def get_experiments(
         session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> list[ExperimentSummary]:
-        return list_experiments(session)
+        return list_experiments(session, owner_user_id=current_user.id)
 
     @app.get(
         "/api/experiments/{simulation_id}",
@@ -757,9 +859,14 @@ def create_app(
     def get_experiment(
         simulation_id: int,
         session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
     ) -> ExperimentReplay:
         try:
-            return load_replay(session, simulation_id)
+            return load_replay(
+                session,
+                simulation_id,
+                owner_user_id=current_user.id,
+            )
         except FileNotFoundError as error:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -771,11 +878,23 @@ def create_app(
         websocket: WebSocket,
         simulation_id: int,
     ) -> None:
-        try:
-            simulation_manager.require(simulation_id)
-        except SimulationNotFoundError:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
+        with websocket.app.state.session_factory() as auth_session:
+            current_user = session_user(
+                auth_session,
+                websocket.cookies.get(SESSION_COOKIE_NAME),
+            )
+            if current_user is None:
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
+            try:
+                manager_for_user_or_404(
+                    simulation_id,
+                    auth_session,
+                    current_user,
+                )
+            except HTTPException:
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
 
         await websocket.accept()
         try:

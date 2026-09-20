@@ -34,6 +34,28 @@ const emptyTelemetry: TelemetryFrame = {
   flight_mode: 'IDLE',
 }
 
+function freshTelemetry(): TelemetryFrame {
+  return {
+    t: 0,
+    position: { x: 0, y: 0, z: 0 },
+    velocity: { x: 0, y: 0, z: 0 },
+    attitude: { roll: 0, pitch: 0, yaw: 0 },
+    angular_velocity: { p: 0, q: 0, r: 0 },
+    center_of_gravity: { x: 0, y: 0, z: 0 },
+    motors: { outputs: [0, 0, 0, 0], thrusts_n: [0, 0, 0, 0] },
+    forces: { gravity_n: 0, total_thrust_n: 0 },
+    wind: { speed_mps: 0, direction_deg: 0 },
+    power: {
+      estimated_power_w: 0,
+      battery_remaining: 1,
+      voltage_v: 0,
+      current_a: 0,
+    },
+    armed: false,
+    flight_mode: 'IDLE',
+  }
+}
+
 function requestErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
     const detail = error.response?.data?.detail
@@ -233,6 +255,22 @@ export const useSimulationStore = defineStore('simulation', () => {
     connectionStatus.value = 'DISCONNECTED'
   }
 
+  function resetForLogout(): void {
+    disconnectTelemetry()
+    telemetry.value = freshTelemetry()
+    history.value = []
+    simulationId.value = null
+    simulationStatus.value = 'STOPPED'
+    error.value = ''
+    hasTelemetry.value = false
+    targetAltitude.value = 10
+    windSpeed.value = 5
+    windDirection.value = 90
+    targetPosition.value = { x: 0, y: 0, z: 0 }
+    waypoints.value = []
+    boundaryM.value = 25
+  }
+
   return {
     telemetry,
     history,
@@ -264,5 +302,6 @@ export const useSimulationStore = defineStore('simulation', () => {
     setWaypoints,
     connectTelemetry,
     disconnectTelemetry,
+    resetForLogout,
   }
 })

@@ -2,6 +2,7 @@ import axios from 'axios'
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '../api/client'
+import { useAuthStore } from './auth'
 import type { UserInfo, UserSettings } from '../types/settings'
 import { DEFAULT_USER_SETTINGS } from '../types/settings'
 
@@ -18,18 +19,28 @@ function errorMessage(error: unknown): string {
 }
 
 export const useSettingsStore = defineStore('settings', () => {
-  const user = ref<UserInfo>({ username: 'admin' })
+  const auth = useAuthStore()
+  const user = ref<UserInfo | null>(null)
   const settings = ref<UserSettings>(cloneDefaults())
-  const loaded = ref(false)
+  const loadedForUserId = ref<number | null>(null)
   const loading = ref(false)
   const saving = ref(false)
   const error = ref('')
   const savedAt = ref<number | null>(null)
 
-  const username = computed(() => user.value.username)
+  const username = computed(() => user.value?.username ?? auth.user?.username ?? '')
+  const displayName = computed(
+    () => user.value?.display_name ?? auth.user?.display_name ?? username.value,
+  )
+  const role = computed(() => user.value?.role ?? auth.user?.role ?? 'student')
 
   async function initialize(force = false): Promise<void> {
-    if ((loaded.value && !force) || loading.value) return
+    const userId = auth.user?.id
+    if (!userId) {
+      resetForLogout()
+      return
+    }
+    if ((!force && loadedForUserId.value === userId) || loading.value) return
     loading.value = true
     error.value = ''
     try {
@@ -39,7 +50,7 @@ export const useSettingsStore = defineStore('settings', () => {
       ])
       user.value = userResponse.data
       settings.value = settingsResponse.data
-      loaded.value = true
+      loadedForUserId.value = userId
     } catch (caught) {
       error.value = errorMessage(caught)
     } finally {
@@ -53,7 +64,7 @@ export const useSettingsStore = defineStore('settings', () => {
     try {
       const response = await api.put<UserSettings>('/settings', settings.value)
       settings.value = response.data
-      loaded.value = true
+      loadedForUserId.value = auth.user?.id ?? null
       savedAt.value = Date.now()
     } catch (caught) {
       error.value = errorMessage(caught)
@@ -80,11 +91,21 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value = cloneDefaults()
   }
 
+  function resetForLogout(): void {
+    user.value = null
+    settings.value = cloneDefaults()
+    loadedForUserId.value = null
+    savedAt.value = null
+    error.value = ''
+  }
+
   return {
     user,
     username,
+    displayName,
+    role,
     settings,
-    loaded,
+    loaded: computed(() => loadedForUserId.value !== null),
     loading,
     saving,
     error,
@@ -93,5 +114,6 @@ export const useSettingsStore = defineStore('settings', () => {
     save,
     changePassword,
     resetDraft,
+    resetForLogout,
   }
 })

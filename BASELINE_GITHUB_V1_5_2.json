@@ -1,0 +1,20 @@
+{
+  "repository": "qiqidonebyte/uav-studio",
+  "branch": "main",
+  "head": "cdd316c938242905cbd4a363eb6fe1d2ac14af29",
+  "head_message": "style: rename aircraft entry to my aircraft",
+  "artifact": "UAV Studio v1.5.2 Accounts & Workspace",
+  "scope": "incremental overlay against current GitHub main",
+  "important_baseline_blobs": {
+    "backend/main.py": "01b7447c03ff08cd055748de9a39021b802e447e",
+    "backend/models.py": "2adb5588ca1d1a0c949714b3b26c7a7afbf8dd0c",
+    "backend/database.py": "e283bb1e668add65875758fdb98e46afe7f7aeb3",
+    "backend/user_settings.py": "63bfa347729db35bc14692ed1424e89bb2549821",
+    "frontend/src/App.vue": "1288eba0acd0223121591cf583bcd63480385b52",
+    "frontend/src/stores/assembly.ts": "8c630ee81a02221410625f951f428660b0c245dc",
+    "frontend/src/stores/simulation.ts": "cbf2d350b08c7c5e39f7d99b13a2bde78ef8627d",
+    "frontend/src/views/AircraftLibrary.vue": "73a284f9013eab42249877659144409a41bd779f",
+    "frontend/src/router/index.ts": "50a59626aabbdafc0262711f27d25859a6b82606",
+    "frontend/src/api/client.ts": "4ba893c6ede74b6708aef7209d18beba0e681736"
+  }
+}

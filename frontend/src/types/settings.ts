@@ -47,7 +47,11 @@ export interface UserSettings {
 }
 
 export interface UserInfo {
+  id: number
   username: string
+  display_name: string
+  role: string
+  aircraft_limit: number
 }
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {

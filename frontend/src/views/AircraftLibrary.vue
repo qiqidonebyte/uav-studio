@@ -10,7 +10,13 @@
         <button class="secondary-button" :disabled="store.libraryLoading" @click="store.refreshLibrary()">
           刷新
         </button>
-        <button class="primary-button" data-testid="new-aircraft" @click="openCreateDialog()">
+        <button
+          class="primary-button"
+          data-testid="new-aircraft"
+          :disabled="!store.canCreateAircraft"
+          :title="store.canCreateAircraft ? '新建设计' : `每个账号最多保存 ${store.aircraftLimit} 架飞机`"
+          @click="openCreateDialog()"
+        >
           + 新建设计
         </button>
       </div>
@@ -18,8 +24,8 @@
 
     <section class="library-summary">
       <div>
-        <strong>{{ store.aircraftLibrary.length }}</strong>
-        <span>飞机设计</span>
+        <strong>{{ store.aircraftLibrary.length }} / {{ store.aircraftLimit }}</strong>
+        <span>飞机设计 · 账号上限</span>
       </div>
       <div>
         <strong>{{ validDesignCount }}</strong>
@@ -103,6 +109,8 @@
             <button
               class="quiet-button"
               data-testid="duplicate-aircraft-design"
+              :disabled="!store.canCreateAircraft"
+              :title="store.canCreateAircraft ? '复制为新的独立方案' : `已达到 ${store.aircraftLimit} 架上限`"
               @click="duplicate(item)"
             >
               复制方案
@@ -111,10 +119,20 @@
         </div>
       </article>
 
-      <button class="new-design-card" @click="openCreateDialog()">
-        <span>+</span>
-        <b>新建设计</b>
-        <small>从参考机、空白 Quad-X 或 450 机架开始</small>
+      <button
+        :class="['new-design-card', { limited: !store.canCreateAircraft }]"
+        :disabled="!store.canCreateAircraft"
+        @click="openCreateDialog()"
+      >
+        <span>{{ store.canCreateAircraft ? '+' : store.aircraftLibrary.length }}</span>
+        <b>{{ store.canCreateAircraft ? '新建设计' : '已达到飞机上限' }}</b>
+        <small>
+          {{
+            store.canCreateAircraft
+              ? '从参考机、空白 Quad-X 或 450 机架开始'
+              : `每个账号最多保存 ${store.aircraftLimit} 架飞机`
+          }}
+        </small>
       </button>
     </main>
 
@@ -274,6 +292,10 @@ function showNotice(message: string): void {
 }
 
 function openCreateDialog(): void {
+  if (!store.canCreateAircraft) {
+    showNotice(`每个账号最多保存 ${store.aircraftLimit} 架飞机。`)
+    return
+  }
   createForm.templateKey = store.aircraftTemplates[0]?.key ?? 'reference-650'
   createForm.name = ''
   createForm.description = ''
@@ -291,6 +313,8 @@ async function createDesign(): Promise<void> {
     )
     createDialogOpen.value = false
     await router.push('/assembly')
+  } catch (error) {
+    showNotice(error instanceof Error ? error.message : store.error || '创建设计失败')
   } finally {
     creating.value = false
   }
@@ -303,8 +327,16 @@ async function openAircraft(aircraftId: number): Promise<void> {
 
 async function duplicate(item: AircraftLibraryItem): Promise<void> {
   if (!item.aircraft.id) return
-  const copy = await store.duplicateAircraft(item.aircraft.id)
-  showNotice(`已复制为「${copy.aircraft.name}」`)
+  if (!store.canCreateAircraft) {
+    showNotice(`每个账号最多保存 ${store.aircraftLimit} 架飞机。`)
+    return
+  }
+  try {
+    const copy = await store.duplicateAircraft(item.aircraft.id)
+    showNotice(`已复制为「${copy.aircraft.name}」`)
+  } catch (error) {
+    showNotice(error instanceof Error ? error.message : store.error || '复制方案失败')
+  }
 }
 
 function openEditDialog(item: AircraftLibraryItem): void {
@@ -454,7 +486,8 @@ function templateIcon(key: string): string {
   color: #36516f;
 }
 .primary-button:disabled,
-.secondary-button:disabled { opacity: .55; cursor: not-allowed; }
+.secondary-button:disabled,
+.quiet-button:disabled { opacity: .48; cursor: not-allowed; }
 
 .library-summary {
   max-width: 1480px;
@@ -619,7 +652,9 @@ function templateIcon(key: string): string {
   color: #6c7f95;
   cursor: pointer;
 }
-.new-design-card:hover { border-color: #78a8e8; background: #f5f9ff; }
+.new-design-card:hover:not(:disabled) { border-color: #78a8e8; background: #f5f9ff; }
+.new-design-card.limited { cursor:not-allowed; opacity:.68; background:rgba(244,247,250,.74); }
+.new-design-card.limited > span { color:#8b98a8; border-color:#d5dde7; background:#f7f9fb; }
 .new-design-card > span {
   display: grid; place-items: center; width: 48px; height: 48px;
   border: 1px solid #b9cee8; border-radius: 14px;

@@ -2,6 +2,7 @@ import axios from 'axios'
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '../api/client'
+import { useAuthStore } from './auth'
 import type {
   AircraftDefinition,
   AircraftLibraryItem,
@@ -31,11 +32,15 @@ import {
   type MountPoint,
 } from '../three/assemblySemantics'
 
-const ACTIVE_AIRCRAFT_KEY = 'uavstudio.activeAircraftId'
+const ACTIVE_AIRCRAFT_KEY_PREFIX = 'uavstudio.activeAircraftId'
 
-function storedAircraftId(): number | null {
+function activeAircraftKey(userId: number): string {
+  return `${ACTIVE_AIRCRAFT_KEY_PREFIX}:${userId}`
+}
+
+function storedAircraftId(userId: number): number | null {
   try {
-    const value = globalThis.localStorage?.getItem(ACTIVE_AIRCRAFT_KEY)
+    const value = globalThis.localStorage?.getItem(activeAircraftKey(userId))
     if (!value) return null
     const parsed = Number(value)
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null
@@ -44,9 +49,12 @@ function storedAircraftId(): number | null {
   }
 }
 
-function rememberAircraftId(aircraftId: number): void {
+function rememberAircraftId(userId: number, aircraftId: number): void {
   try {
-    globalThis.localStorage?.setItem(ACTIVE_AIRCRAFT_KEY, String(aircraftId))
+    globalThis.localStorage?.setItem(
+      activeAircraftKey(userId),
+      String(aircraftId),
+    )
   } catch {
     // Local storage is a convenience only; SQLite remains the source of truth.
   }
@@ -89,7 +97,8 @@ export const useAssemblyStore = defineStore('assembly', () => {
   const components = ref<Component[]>([])
   const aircraftLibrary = ref<AircraftLibraryItem[]>([])
   const aircraftTemplates = ref<AircraftTemplate[]>([])
-  const activeAircraftId = ref<number | null>(storedAircraftId())
+  const activeAircraftId = ref<number | null>(null)
+  const initializedUserId = ref<number | null>(null)
   const libraryLoading = ref(false)
   const saveStatus = ref<'saved' | 'saving' | 'error'>('saved')
   const lastSavedAt = ref<Date | null>(null)
@@ -116,6 +125,12 @@ export const useAssemblyStore = defineStore('assembly', () => {
       },
   )
   const aircraftName = computed(() => aircraft.value?.name ?? '正在载入')
+  const authStore = useAuthStore()
+  const aircraftLimit = computed(() => authStore.aircraftLimit)
+  const aircraftCount = computed(() => aircraftLibrary.value.length)
+  const canCreateAircraft = computed(
+    () => aircraftCount.value < aircraftLimit.value,
+  )
   const activeLibraryItem = computed(
     () => aircraftLibrary.value.find(
       item => item.aircraft.id === activeAircraftId.value,
@@ -154,9 +169,9 @@ export const useAssemblyStore = defineStore('assembly', () => {
       engineering: item.engineering,
       validation: item.validation,
     }
-    if (item.aircraft.id) {
+    if (item.aircraft.id && authStore.user) {
       activeAircraftId.value = item.aircraft.id
-      rememberAircraftId(item.aircraft.id)
+      rememberAircraftId(authStore.user.id, item.aircraft.id)
     }
     selectedSlot.value = null
     selectedMountId.value = null
@@ -181,8 +196,36 @@ export const useAssemblyStore = defineStore('assembly', () => {
     )
   }
 
+  function resetWorkspace(): void {
+    aircraftLibrary.value = []
+    aircraftTemplates.value = []
+    activeAircraftId.value = null
+    initializedUserId.value = null
+    assemblyState.value = null
+    selectedSlot.value = null
+    selectedMountId.value = null
+    pendingInstall.value = null
+    lastInstallation.value = null
+    lastRemoval.value = null
+    removingMountId.value = null
+    saveStatus.value = 'saved'
+    lastSavedAt.value = null
+    error.value = ''
+  }
+
   async function initialize(): Promise<void> {
-    if (assemblyState.value || loading.value) return
+    const userId = authStore.user?.id
+    if (!userId) {
+      resetWorkspace()
+      return
+    }
+    if (initializedUserId.value === userId && assemblyState.value) return
+    if (loading.value) return
+    if (initializedUserId.value !== null && initializedUserId.value !== userId) {
+      resetWorkspace()
+    }
+    initializedUserId.value = userId
+    activeAircraftId.value = storedAircraftId(userId)
     loading.value = true
     error.value = ''
     try {
@@ -222,7 +265,7 @@ export const useAssemblyStore = defineStore('assembly', () => {
       const response = await api.get<AssemblyState>(`/aircraft/${aircraftId}`)
       assemblyState.value = response.data
       activeAircraftId.value = aircraftId
-      rememberAircraftId(aircraftId)
+      if (authStore.user) rememberAircraftId(authStore.user.id, aircraftId)
       selectedSlot.value = null
       selectedMountId.value = null
       pendingInstall.value = null
@@ -241,26 +284,42 @@ export const useAssemblyStore = defineStore('assembly', () => {
     name?: string,
     description = '',
   ): Promise<AircraftLibraryItem> {
-    const response = await api.post<AircraftLibraryItem>(
-      `/aircraft/from-template/${templateKey}`,
-      { name: name?.trim() || null, description },
-    )
-    upsertLibraryItem(response.data)
-    applyLibraryItem(response.data)
-    lastSavedAt.value = new Date(response.data.updated_at)
-    return response.data
+    if (!canCreateAircraft.value) {
+      throw new Error(`每个用户最多保存 ${aircraftLimit.value} 架飞机。`)
+    }
+    try {
+      const response = await api.post<AircraftLibraryItem>(
+        `/aircraft/from-template/${templateKey}`,
+        { name: name?.trim() || null, description },
+      )
+      upsertLibraryItem(response.data)
+      applyLibraryItem(response.data)
+      lastSavedAt.value = new Date(response.data.updated_at)
+      return response.data
+    } catch (caught) {
+      error.value = errorMessage(caught)
+      throw new Error(error.value)
+    }
   }
 
   async function duplicateAircraft(
     aircraftId: number,
     name?: string,
   ): Promise<AircraftLibraryItem> {
-    const response = await api.post<AircraftLibraryItem>(
-      `/aircraft/${aircraftId}/duplicate`,
-      { name: name?.trim() || null },
-    )
-    upsertLibraryItem(response.data)
-    return response.data
+    if (!canCreateAircraft.value) {
+      throw new Error(`每个用户最多保存 ${aircraftLimit.value} 架飞机。`)
+    }
+    try {
+      const response = await api.post<AircraftLibraryItem>(
+        `/aircraft/${aircraftId}/duplicate`,
+        { name: name?.trim() || null },
+      )
+      upsertLibraryItem(response.data)
+      return response.data
+    } catch (caught) {
+      error.value = errorMessage(caught)
+      throw new Error(error.value)
+    }
   }
 
   async function duplicateActive(name?: string): Promise<AircraftLibraryItem | null> {
@@ -295,6 +354,9 @@ export const useAssemblyStore = defineStore('assembly', () => {
       const fallback = aircraftLibrary.value[0]
       if (fallback?.aircraft.id) {
         applyLibraryItem(fallback)
+      } else {
+        activeAircraftId.value = null
+        assemblyState.value = null
       }
     }
   }
@@ -579,6 +641,9 @@ export const useAssemblyStore = defineStore('assembly', () => {
     aircraftTemplates,
     activeAircraftId,
     activeLibraryItem,
+    aircraftLimit,
+    aircraftCount,
+    canCreateAircraft,
     assemblyState,
     aircraft,
     engineering,
@@ -599,6 +664,7 @@ export const useAssemblyStore = defineStore('assembly', () => {
     lastSavedAt,
     error,
     initialize,
+    resetWorkspace,
     refreshComponents,
     refreshLibrary,
     refreshTemplates,

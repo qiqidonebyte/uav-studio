@@ -19,7 +19,8 @@
     "test:p0:capture": "node tests/p0-visual-capture.mjs",
     "e2e:component-library": "node tests/e2e-component-library.mjs",
     "e2e:settings": "node tests/e2e-settings.mjs",
-    "e2e:aircraft-library": "node tests/e2e-aircraft-library.mjs"
+    "e2e:aircraft-library": "node tests/e2e-aircraft-library.mjs",
+    "e2e:auth": "node tests/e2e-auth.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",

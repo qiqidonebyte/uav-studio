@@ -14,7 +14,22 @@ class UserRecord(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    role: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    is_active: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     settings_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class SessionRecord(Base):
+    __tablename__ = "sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    created_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    last_seen_at: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
 
@@ -32,6 +47,7 @@ class AircraftRecord(Base):
     __tablename__ = "aircraft"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     created_at: Mapped[str | None] = mapped_column(String(64), nullable=True)

@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.constants import FLIGHT_BOUNDARY_M
-from backend.models import SimulationRecord
+from backend.models import AircraftRecord, SimulationRecord
 from backend.schemas import (
     AircraftDefinition,
     Component,
@@ -86,9 +86,22 @@ def save_experiment(
     return summary
 
 
-def list_experiments(database: Session) -> list[ExperimentSummary]:
+def list_experiments(
+    database: Session,
+    *,
+    owner_user_id: int | None = None,
+) -> list[ExperimentSummary]:
+    statement = select(SimulationRecord)
+    if owner_user_id is not None:
+        statement = (
+            statement.join(
+                AircraftRecord,
+                AircraftRecord.id == SimulationRecord.aircraft_id,
+            )
+            .where(AircraftRecord.owner_user_id == owner_user_id)
+        )
     records = database.scalars(
-        select(SimulationRecord).order_by(SimulationRecord.started_at.desc())
+        statement.order_by(SimulationRecord.started_at.desc())
     ).all()
     return [_summary_from_record(record) for record in records]
 
@@ -114,8 +127,26 @@ def _enrich_legacy_visuals(components: list[Component]) -> list[Component]:
     return enriched
 
 
-def load_replay(database: Session, simulation_id: int) -> ExperimentReplay:
-    record = database.get(SimulationRecord, simulation_id)
+def load_replay(
+    database: Session,
+    simulation_id: int,
+    *,
+    owner_user_id: int | None = None,
+) -> ExperimentReplay:
+    if owner_user_id is None:
+        record = database.get(SimulationRecord, simulation_id)
+    else:
+        record = database.scalar(
+            select(SimulationRecord)
+            .join(
+                AircraftRecord,
+                AircraftRecord.id == SimulationRecord.aircraft_id,
+            )
+            .where(
+                SimulationRecord.id == simulation_id,
+                AircraftRecord.owner_user_id == owner_user_id,
+            )
+        )
     if record is None:
         raise FileNotFoundError(simulation_id)
     path = Path(record.telemetry_file)
