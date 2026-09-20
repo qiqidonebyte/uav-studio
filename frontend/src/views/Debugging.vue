@@ -18,17 +18,35 @@
         </button>
       </section>
 
-      <section class="side-section scenarios">
-        <div class="side-title">训练场景</div>
+      <section class="side-section scenarios training-sidebar-section">
+        <div class="side-title training-side-title">
+          <span>实训案例库</span>
+          <small>{{ trainingCases.length }} 个案例</small>
+        </div>
         <button
-          v-for="item in scenarios"
-          :key="item.key"
-          :class="['scenario-card', { active: scenario === item.key }]"
-          @click="switchScenario(item.key)"
+          :class="['scenario-card', { active: !activeTrainingCase }]"
+          @click="enterFreeDebug"
         >
-          <span>{{ item.icon }}</span>
-          <div><b>{{ item.title }}</b><small>{{ item.subtitle }}</small></div>
+          <span>◇</span>
+          <div><b>自由调试</b><small>不注入故障，自主使用调试工具</small></div>
         </button>
+        <button
+          v-if="activeTrainingCase"
+          class="scenario-card active training-current-card"
+          @click="trainingLibraryOpen = true"
+        >
+          <span>{{ activeTrainingCase.icon }}</span>
+          <div>
+            <b>{{ activeTrainingCase.id }} · {{ activeTrainingCase.title }}</b>
+            <small>{{ trainingElapsedText }} · {{ trainingProgressText }}</small>
+          </div>
+        </button>
+        <button class="training-library-button" @click="trainingLibraryOpen = true">
+          <span>▦</span>
+          <div><b>打开案例库</b><small>基础故障 / 综合检修</small></div>
+          <strong>›</strong>
+        </button>
+        <small v-if="trainingCatalogError" class="training-catalog-error">{{ trainingCatalogError }}</small>
       </section>
 
       <div class="practice-mark">
@@ -46,6 +64,37 @@
           @click="activeSection = tab.key"
         >{{ tab.title }}</button>
       </div>
+
+      <section v-if="activeTrainingCase" class="training-task-hud">
+        <div class="training-task-main">
+          <span class="training-case-code">{{ activeTrainingCase.id }}</span>
+          <div>
+            <b>{{ activeTrainingCase.title }}</b>
+            <small>{{ activeTrainingCase.student_brief.symptom }}</small>
+          </div>
+        </div>
+        <div class="training-task-meta">
+          <div><span>计时</span><b>{{ trainingElapsedText }}</b></div>
+          <div><span>建议</span><b>{{ activeTrainingCase.recommended_minutes }} min</b></div>
+          <div><span>进度</span><b>{{ trainingProgressText }}</b></div>
+          <div><span>故障源</span><b>{{ activeTrainingCase.fault_source }}</b></div>
+        </div>
+        <div class="training-task-actions">
+          <button @click="requestTrainingHint">提示 {{ trainingHintsUsed }}/{{ activeTrainingCase.hints.length }}</button>
+          <button class="training-submit" @click="submitTrainingCase">提交诊断</button>
+          <button @click="restartTrainingCase">重新开始</button>
+          <button class="training-exit" @click="enterFreeDebug">退出案例</button>
+        </div>
+        <div v-if="trainingCurrentHint" class="training-hint"><b>提示</b><span>{{ trainingCurrentHint }}</span></div>
+        <div v-if="trainingSubmittedEvaluation" :class="['training-result', { passed: trainingSubmittedEvaluation.passed }]">
+          <div>
+            <b>{{ trainingSubmittedEvaluation.passed ? '案例完成' : '尚未完成全部修复' }}</b>
+            <small>修复 {{ trainingSubmittedEvaluation.repairCompleted }}/{{ trainingSubmittedEvaluation.repairTotal }} · 验证 {{ trainingSubmittedEvaluation.validationCompleted }}/{{ trainingSubmittedEvaluation.validationTotal }}</small>
+          </div>
+          <strong>{{ trainingSubmittedEvaluation.score }}<em>/100</em></strong>
+          <span>诊断 {{ trainingSubmittedEvaluation.diagnosisScore }} · 修复 {{ trainingSubmittedEvaluation.repairScore }} · 验证 {{ trainingSubmittedEvaluation.validationScore }} · 效率 {{ trainingSubmittedEvaluation.efficiencyScore }} · 扣分 {{ trainingSubmittedEvaluation.penalty }}</span>
+        </div>
+      </section>
 
       <template v-if="activeSection === 'sensors'">
         <div class="sensor-workbench">
@@ -798,6 +847,45 @@
         <button v-else class="flight-action disabled" disabled title="请先完成起飞前检查">➤ 进入飞行验证</button>
       </div>
     </aside>
+
+    <div v-if="trainingLibraryOpen" class="training-library-backdrop" @click.self="trainingLibraryOpen = false">
+      <section class="training-library-panel">
+        <header>
+          <div>
+            <span>FAULT TRAINING LIBRARY</span>
+            <h2>装调检修故障实训案例库</h2>
+            <p>选择案例后回到原调试工作台完成诊断。案例只给出现象和任务，不直接显示故障答案。</p>
+          </div>
+          <button class="training-close" @click="trainingLibraryOpen = false">×</button>
+        </header>
+        <div class="training-filter-row">
+          <button
+            v-for="item in trainingCategoryOptions"
+            :key="item.key"
+            :class="{ active: trainingCategoryFilter === item.key }"
+            @click="trainingCategoryFilter = item.key"
+          >{{ item.label }}</button>
+        </div>
+        <div class="training-case-grid">
+          <article v-for="item in filteredTrainingCases" :key="item.id" class="training-case-card">
+            <div class="training-case-card-head">
+              <span class="training-case-icon">{{ item.icon }}</span>
+              <div><small>{{ item.id }} · {{ trainingCategoryLabel(item.category) }}</small><b>{{ item.title }}</b></div>
+              <strong>{{ trainingDifficulty(item.difficulty) }}</strong>
+            </div>
+            <p>{{ item.student_brief.symptom }}</p>
+            <dl>
+              <div><dt>建议时间</dt><dd>{{ item.recommended_minutes }} min</dd></div>
+              <div><dt>故障来源</dt><dd>{{ item.fault_source }}</dd></div>
+            </dl>
+            <div class="training-case-task"><b>任务</b><span>{{ item.student_brief.task }}</span></div>
+            <button class="training-start-button" @click="startTrainingCase(item)">
+              {{ activeTrainingCase?.id === item.id ? '重新开始案例' : '开始实训' }}
+            </button>
+          </article>
+        </div>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -812,6 +900,7 @@ import { calculateDebugScore, resolveMotorResponse, type DebugScenario } from '.
 import { calculateSafetyScore, recommendedSafetyProfile, safetyParamKeys, unsafeDemoSafetyProfile, validateSafetyDraft, type SafetyDraft, type SafetyParamKey } from '../utils/safety'
 import { calculateRcScore, cloneRcDraft, defaultRcDraft, flattenRcDraft, normalizeRcInput, rcMapParams, rcRoleLabels, rcRoles, validateRcDraft, type RcDraft, type RcRole } from '../utils/rc'
 import { aircraftFingerprint, clearPreflightSnapshot, loadPreflightSnapshot, preflightScore, savePreflightSnapshot, type PreflightCheckRecord, type PreflightSnapshot } from '../utils/preflight'
+import { loadFaultTrainingCases, scoreFaultTraining, trainingCategoryText, trainingDifficultyText, type FaultTrainingCase, type TrainingCategory, type TrainingEvaluation } from '../utils/training'
 
 type SectionKey = 'sensors' | 'rc' | 'power' | 'safety' | 'preflight'
 type ScenarioKey = DebugScenario
@@ -830,7 +919,7 @@ interface DebugLog {
 
 const assemblyStore = useAssemblyStore()
 const activeSection = ref<SectionKey>('power')
-const scenario = ref<ScenarioKey>('mapping')
+const scenario = ref<ScenarioKey>('standard')
 const bridgeMode = ref<'demo' | 'live'>('demo')
 const bridgeError = ref('')
 const bridgeBusy = ref(false)
@@ -892,6 +981,29 @@ const motorVerified = ref<Record<MotorName, boolean>>({ M1: false, M2: false, M3
 const preflightBusy = ref(false)
 const preflightSnapshot = ref<PreflightSnapshot | null>(null)
 const preflightMessage = ref('')
+
+const trainingCases = ref<FaultTrainingCase[]>([])
+const trainingCatalogError = ref('')
+const trainingLibraryOpen = ref(false)
+const trainingCategoryFilter = ref<'all' | TrainingCategory>('all')
+const activeTrainingCase = ref<FaultTrainingCase | null>(null)
+const trainingStartedAt = ref<number | null>(null)
+const trainingFinishedAt = ref<number | null>(null)
+const trainingVisitedSections = ref<string[]>([])
+const trainingHintsUsed = ref(0)
+const trainingWrongOperations = ref(0)
+const trainingCurrentHint = ref('')
+const trainingSubmittedEvaluation = ref<TrainingEvaluation | null>(null)
+let trainingInternalMutation = false
+
+const trainingCategoryOptions: Array<{ key: 'all' | TrainingCategory; label: string }> = [
+  { key: 'all', label: '全部' },
+  { key: 'sensors', label: '传感器' },
+  { key: 'rc', label: '遥控' },
+  { key: 'power', label: '动力' },
+  { key: 'safety', label: '安全' },
+  { key: 'integrated', label: '综合' },
+]
 
 const motorNames: MotorName[] = ['M1', 'M2', 'M3', 'M4']
 const motorIndex: Record<MotorName, number> = { M1: 0, M2: 1, M3: 2, M4: 3 }
@@ -979,13 +1091,15 @@ const gpsStatus = computed(() => {
   }
   return scenario.value === 'compass' ? '定位受限' : '7 星'
 })
-const compassFaultActive = computed(() => bridgeMode.value === 'demo' && scenario.value === 'compass' && !demoCompassRepaired.value)
+const compassFaultActive = computed(() => (bridgeMode.value === 'demo' || trainingHasInjection('compass_fault')) && scenario.value === 'compass' && !demoCompassRepaired.value)
 const ekfOk = computed(() => {
-  if (bridgeMode.value !== 'live') return !compassFaultActive.value
+  if (compassFaultActive.value) return false
+  if (bridgeMode.value !== 'live') return true
   return liveTelemetry.value?.estimator.ok === true
 })
 const ekfText = computed(() => {
-  if (bridgeMode.value !== 'live') return compassFaultActive.value ? '异常' : '正常'
+  if (compassFaultActive.value) return '异常'
+  if (bridgeMode.value !== 'live') return '正常'
   if (liveTelemetry.value?.estimator.ok === null || liveTelemetry.value?.estimator.ok === undefined) return '待数据'
   return liveTelemetry.value.estimator.ok ? '正常' : '异常'
 })
@@ -998,7 +1112,7 @@ const bridgeDetailText = computed(() => {
   return '启动 Bridge 与 PX4 SIH 后点击连接'
 })
 
-const mappingFaultVisible = computed(() => bridgeMode.value === 'demo' && scenario.value === 'mapping' && !mappingRepaired.value)
+const mappingFaultVisible = computed(() => (bridgeMode.value === 'demo' || trainingHasInjection('motor_mapping')) && scenario.value === 'mapping' && !mappingRepaired.value)
 const faultMotor = computed<MotorName | null>(() => mappingFaultVisible.value ? 'M3' : null)
 const prearmPassed = computed(() => {
   if (bridgeMode.value === 'live') return Boolean(liveTelemetry.value?.prearm_ok)
@@ -1101,6 +1215,50 @@ const preflightPermitValid = computed(() => Boolean(
 const preflightSavedAtText = computed(() => preflightSnapshot.value?.checked_at
   ? new Date(preflightSnapshot.value.checked_at).toLocaleString('zh-CN', { hour12: false })
   : '—')
+
+const filteredTrainingCases = computed(() => trainingCategoryFilter.value === 'all'
+  ? trainingCases.value
+  : trainingCases.value.filter(item => item.category === trainingCategoryFilter.value))
+const trainingElapsedSeconds = computed(() => {
+  clockTick.value
+  if (trainingStartedAt.value === null) return 0
+  const end = trainingFinishedAt.value ?? Date.now()
+  return Math.max(0, Math.floor((end - trainingStartedAt.value) / 1000))
+})
+const trainingElapsedText = computed(() => formatTrainingDuration(trainingElapsedSeconds.value))
+const trainingConditionState = computed<Record<string, boolean>>(() => {
+  const rollChannel = Number(rcDraft.value.mapping.roll)
+  const rollCalibration = rcDraft.value.channels[rollChannel]
+  const standardMapping = Number(rcDraft.value.mapping.roll) === 1
+    && Number(rcDraft.value.mapping.pitch) === 2
+    && Number(rcDraft.value.mapping.throttle) === 3
+    && Number(rcDraft.value.mapping.yaw) === 4
+  return {
+    compass_repaired: demoCompassRepaired.value,
+    sensor_verified: sensorVerificationPassed.value,
+    rc_roll_normal: Boolean(rollCalibration && Number(rollCalibration.reverse) === 1),
+    rc_mapping_standard: standardMapping,
+    rc_verified: rcVerificationPassed.value,
+    motor_mapping_repaired: mappingRepaired.value,
+    motors_verified: allMotorsVerified.value,
+    safety_clean: safetyValidationErrors.value.length === 0,
+    safety_verified: safetyVerificationPassed.value,
+    preflight_passed: preflightPermitValid.value,
+  }
+})
+const trainingEvaluationPreview = computed(() => activeTrainingCase.value
+  ? scoreFaultTraining({
+      trainingCase: activeTrainingCase.value,
+      conditionState: trainingConditionState.value,
+      visitedSections: trainingVisitedSections.value,
+      elapsedSeconds: trainingElapsedSeconds.value,
+      hintsUsed: trainingHintsUsed.value,
+      wrongOperations: trainingWrongOperations.value,
+    })
+  : null)
+const trainingProgressText = computed(() => trainingEvaluationPreview.value
+  ? `${trainingEvaluationPreview.value.completedConditions}/${trainingEvaluationPreview.value.totalConditions} 条件完成`
+  : '未开始')
 
 const rcChannelOptions = Array.from({ length: 19 }, (_, index) => index)
 const liveRcAge = computed(() => liveTelemetry.value?.rc?.age_s ?? null)
@@ -1407,6 +1565,161 @@ function nowText(): string {
 function appendLog(title: string, detail = '教学调试操作', level: LogLevel = 'info'): void {
   logs.value.push({ id: ++logId, time: nowText(), title, detail, level })
   if (logs.value.length > 12) logs.value = logs.value.slice(-12)
+  if (
+    activeTrainingCase.value
+    && !trainingInternalMutation
+    && level === 'error'
+    && /(失败|拒绝|超时)/.test(title)
+  ) {
+    trainingWrongOperations.value += 1
+  }
+}
+
+function trainingHasInjection(key: string): boolean {
+  return Boolean(activeTrainingCase.value?.injections.includes(key))
+}
+
+function trainingDifficulty(value: number): string {
+  return trainingDifficultyText(value)
+}
+
+function trainingCategoryLabel(category: TrainingCategory): string {
+  return trainingCategoryText(category)
+}
+
+function formatTrainingDuration(seconds: number): string {
+  const value = Math.max(0, Math.floor(seconds))
+  const minutes = Math.floor(value / 60)
+  const remainder = value % 60
+  return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`
+}
+
+function applyTrainingRcInjections(trainingCase: FaultTrainingCase): void {
+  if (!trainingCase.injections.some(key => key === 'rc_roll_reverse' || key === 'rc_mapping_swap')) return
+  const next = defaultRcDraft(18)
+  if (trainingCase.injections.includes('rc_roll_reverse')) {
+    next.channels[1].reverse = -1
+  }
+  if (trainingCase.injections.includes('rc_mapping_swap')) {
+    next.mapping.roll = 2
+    next.mapping.pitch = 1
+  }
+  rcDraft.value = cloneRcDraft(next)
+  rcBaselineFlat.value = flattenRcDraft(next)
+  rcLoadedOnce.value = true
+  rcVirtualMode.value = true
+  rcCaptureComplete.value = false
+  rcVerificationPassed.value = false
+  rcMessageLevel.value = 'warn'
+  rcMessage.value = '案例已载入遥控教学异常。请根据实时输入与映射表自行定位。'
+}
+
+function applyTrainingSafetyInjection(trainingCase: FaultTrainingCase): void {
+  if (!trainingCase.injections.includes('failsafe_profile')) return
+  safetyDraft.value = { ...unsafeDemoSafetyProfile }
+  safetyBaseline.value = { ...unsafeDemoSafetyProfile }
+  safetyDirty.value = {}
+  safetyLoadedOnce.value = true
+  safetyVerificationPassed.value = false
+  demoFailsafeRepaired.value = false
+  safetyMessageLevel.value = 'warn'
+  safetyMessage.value = '案例已载入安全策略异常。请使用策略检查定位风险。'
+}
+
+function applyTrainingCaseInjections(trainingCase: FaultTrainingCase): void {
+  applyTrainingRcInjections(trainingCase)
+  applyTrainingSafetyInjection(trainingCase)
+  if (trainingCase.injections.includes('compass_fault')) {
+    demoCompassRepaired.value = false
+    sensorVerificationPassed.value = false
+  }
+  if (trainingCase.injections.includes('motor_mapping')) {
+    mappingRepaired.value = false
+    motorVerified.value = { M1: false, M2: false, M3: false, M4: false }
+  }
+  invalidatePreflightPermit()
+}
+
+function startTrainingCase(trainingCase: FaultTrainingCase): void {
+  trainingInternalMutation = true
+  activeTrainingCase.value = trainingCase
+  trainingLibraryOpen.value = false
+  trainingStartedAt.value = Date.now()
+  trainingFinishedAt.value = null
+  trainingVisitedSections.value = []
+  trainingHintsUsed.value = 0
+  trainingWrongOperations.value = 0
+  trainingCurrentHint.value = ''
+  trainingSubmittedEvaluation.value = null
+
+  // Avoid a watcher loading normal parameters between scenario reset and injection.
+  activeSection.value = 'power'
+  switchScenario(trainingCase.legacy_scenario)
+  applyTrainingCaseInjections(trainingCase)
+  activeSection.value = trainingCase.initial_section
+  trainingVisitedSections.value = [trainingCase.initial_section]
+  trainingInternalMutation = false
+
+  appendLog(
+    `开始实训案例 ${trainingCase.id}`,
+    `${trainingCase.title} · ${trainingCase.fault_source} · 建议 ${trainingCase.recommended_minutes} 分钟`,
+    'warn',
+  )
+}
+
+function restartTrainingCase(): void {
+  if (activeTrainingCase.value) startTrainingCase(activeTrainingCase.value)
+}
+
+function enterFreeDebug(): void {
+  trainingInternalMutation = true
+  activeTrainingCase.value = null
+  trainingStartedAt.value = null
+  trainingFinishedAt.value = null
+  trainingVisitedSections.value = []
+  trainingHintsUsed.value = 0
+  trainingWrongOperations.value = 0
+  trainingCurrentHint.value = ''
+  trainingSubmittedEvaluation.value = null
+  switchScenario('standard')
+
+  const rc = defaultRcDraft(18)
+  rcDraft.value = cloneRcDraft(rc)
+  rcBaselineFlat.value = flattenRcDraft(rc)
+  rcLoadedOnce.value = true
+  rcVerificationPassed.value = false
+  safetyDraft.value = { ...recommendedSafetyProfile }
+  safetyBaseline.value = { ...recommendedSafetyProfile }
+  safetyDirty.value = {}
+  safetyLoadedOnce.value = true
+  safetyVerificationPassed.value = false
+  trainingInternalMutation = false
+  appendLog('进入自由调试', '已退出故障案例，恢复教学默认配置。', 'info')
+}
+
+function requestTrainingHint(): void {
+  const trainingCase = activeTrainingCase.value
+  if (!trainingCase) return
+  if (trainingHintsUsed.value >= trainingCase.hints.length) {
+    trainingCurrentHint.value = '本案例没有更多提示。'
+    return
+  }
+  trainingCurrentHint.value = trainingCase.hints[trainingHintsUsed.value]
+  trainingHintsUsed.value += 1
+  appendLog('使用案例提示', `已使用第 ${trainingHintsUsed.value} 条提示；本次评分将扣除提示分。`, 'warn')
+}
+
+function submitTrainingCase(): void {
+  if (!activeTrainingCase.value) return
+  const evaluation = trainingEvaluationPreview.value
+  if (!evaluation) return
+  trainingSubmittedEvaluation.value = { ...evaluation }
+  if (evaluation.passed) {
+    trainingFinishedAt.value = Date.now()
+    appendLog('实训案例完成', `${activeTrainingCase.value.id} · 最终得分 ${evaluation.score}/100`, 'success')
+  } else {
+    appendLog('案例提交未通过', `当前完成 ${evaluation.completedConditions}/${evaluation.totalConditions} 个成功条件，可继续诊断后再次提交。`, 'warn')
+  }
 }
 
 function errorText(error: unknown): string {
@@ -1427,7 +1740,9 @@ function switchScenario(next: ScenarioKey): void {
   calibrationState.value = { gyro: 'idle', accelerometer: 'idle', compass: 'idle', barometer: 'idle' }
   calibrationMessage.value = { gyro: '', accelerometer: '', compass: '', barometer: '' }
   stopAllMotors()
-  appendLog(`切换训练场景：${scenarios.find(item => item.key === next)?.title ?? next}`, bridgeMode.value === 'live' ? '真实 PX4 模式不注入前端故障；场景仅保留教学说明' : '场景状态已重新初始化', 'info')
+  if (!trainingInternalMutation) {
+    appendLog(`切换训练场景：${scenarios.find(item => item.key === next)?.title ?? next}`, bridgeMode.value === 'live' ? '真实 PX4 模式不注入前端故障；场景仅保留教学说明' : '场景状态已重新初始化', 'info')
+  }
   if (activeSection.value === 'safety') void loadSafetyParameters()
 }
 
@@ -1556,9 +1871,10 @@ async function calibrateSensor(key: Px4SensorKey): Promise<void> {
   calibrationState.value[key] = 'running'
   calibrationMessage.value[key] = ''
   const title = sensorCalibrations.find(item => item.key === key)?.title ?? key
-  appendLog(`开始${title}`, bridgeMode.value === 'live' ? '向 PX4 发送飞行前校准命令' : '进入教学模拟校准流程', 'info')
+  const teachingCompassInjection = key === 'compass' && trainingHasInjection('compass_fault')
+  appendLog(`开始${title}`, bridgeMode.value === 'live' && !teachingCompassInjection ? '向 PX4 发送飞行前校准命令' : '进入教学故障校准流程', 'info')
   try {
-    if (bridgeMode.value === 'live') {
+    if (bridgeMode.value === 'live' && !teachingCompassInjection) {
       if (px4Armed.value) throw new Error('请先上锁，PX4 仅在飞行前状态接受传感器校准')
       const result = await px4Api.calibrateSensor(key)
       if (!result.accepted) throw new Error(result.timeout ? '等待 PX4 校准 ACK 超时' : `PX4 拒绝校准命令（result ${result.result ?? 'unknown'}）`)
@@ -1570,7 +1886,7 @@ async function calibrateSensor(key: Px4SensorKey): Promise<void> {
       await new Promise(resolve => window.setTimeout(resolve, key === 'accelerometer' || key === 'compass' ? 900 : 550))
       calibrationState.value[key] = 'passed'
       calibrationMessage.value[key] = '教学模拟流程完成'
-      if (key === 'compass' && scenario.value === 'compass') {
+      if (key === 'compass' && (scenario.value === 'compass' || trainingHasInjection('compass_fault'))) {
         demoCompassRepaired.value = true
         appendLog('罗盘教学故障已排除', '磁场强度与航向恢复到教学正常范围，EKF 状态恢复。', 'success')
       } else {
@@ -1591,7 +1907,7 @@ async function runSensorDiagnostic(): Promise<void> {
   sensorActionBusy.value = true
   appendLog('执行传感器检查', bridgeMode.value === 'live' ? '刷新 MAVLink 数据流并运行 PX4 Pre-Arm Check' : '检查教学模拟传感器健康与 EKF 状态', 'info')
   try {
-    if (bridgeMode.value === 'live') {
+    if (bridgeMode.value === 'live' && !trainingHasInjection('compass_fault')) {
       await px4Api.requestStreams()
       await px4Api.prearmCheck()
       await new Promise(resolve => window.setTimeout(resolve, 250))
@@ -1807,13 +2123,20 @@ async function loadRcParameters(): Promise<void> {
       if (hasLiveRcInput.value) rcVirtualMode.value = false
     } else {
       const next = defaultRcDraft(18)
+      if (trainingHasInjection('rc_roll_reverse')) next.channels[1].reverse = -1
+      if (trainingHasInjection('rc_mapping_swap')) {
+        next.mapping.roll = 2
+        next.mapping.pitch = 1
+      }
       rcDraft.value = cloneRcDraft(next)
       rcBaselineFlat.value = flattenRcDraft(next)
       rcLoadedOnce.value = true
       rcVirtualMode.value = true
-      rcMessageLevel.value = 'info'
-      rcMessage.value = '已载入虚拟遥控教学配置。'
-      appendLog('载入遥控教学配置', rcMessage.value, 'info')
+      rcMessageLevel.value = trainingHasInjection('rc_roll_reverse') || trainingHasInjection('rc_mapping_swap') ? 'warn' : 'info'
+      rcMessage.value = trainingHasInjection('rc_roll_reverse') || trainingHasInjection('rc_mapping_swap')
+        ? '已重新载入当前案例的遥控教学异常。'
+        : '已载入虚拟遥控教学配置。'
+      appendLog('载入遥控教学配置', rcMessage.value, rcMessageLevel.value === 'warn' ? 'warn' : 'info')
     }
   } catch (error) {
     rcMessageLevel.value = 'error'
@@ -1931,7 +2254,7 @@ function safetyPercent(value: number): string {
 }
 
 function demoSafetyProfile(): SafetyDraft {
-  if (scenario.value === 'failsafe' && !demoFailsafeRepaired.value) return { ...unsafeDemoSafetyProfile }
+  if ((scenario.value === 'failsafe' || trainingHasInjection('failsafe_profile')) && !demoFailsafeRepaired.value) return { ...unsafeDemoSafetyProfile }
   return { ...recommendedSafetyProfile }
 }
 
@@ -2034,7 +2357,7 @@ async function applySafetyParameters(): Promise<void> {
       await new Promise(resolve => window.setTimeout(resolve, 350))
       safetyBaseline.value = { ...safetyDraft.value }
       safetyDirty.value = {}
-      if (scenario.value === 'failsafe') demoFailsafeRepaired.value = true
+      if (scenario.value === 'failsafe' || trainingHasInjection('failsafe_profile')) demoFailsafeRepaired.value = true
       safetyMessageLevel.value = 'success'
       safetyMessage.value = scenario.value === 'failsafe'
         ? 'Failsafe 教学故障已修复：推荐策略已应用到模拟配置。'
@@ -2100,7 +2423,7 @@ async function testMotor(command: MotorName): Promise<void> {
   motorTestBusy.value = true
   commandedMotor.value = command
 
-  if (bridgeMode.value === 'live') {
+  if (bridgeMode.value === 'live' && !trainingHasInjection('motor_mapping')) {
     actualMotor.value = command
     const outputs: MotorVector = [0, 0, 0, 0]
     outputs[motorIndex[command]] = .25
@@ -2120,7 +2443,7 @@ async function testMotor(command: MotorName): Promise<void> {
     const outputs: MotorVector = [0, 0, 0, 0]
     outputs[motorIndex[actual]] = .62
     motorOutputs.value = outputs
-    appendLog(`执行 ${command} 单电机测试`, `发送 ${command} 教学测试指令（62%）`, 'info')
+    appendLog(`执行 ${command} 单电机测试`, trainingHasInjection('motor_mapping') && bridgeMode.value === 'live' ? `案例使用教学映射注入，不向真实 PX4 发送执行机构指令（${command} 62%）` : `发送 ${command} 教学测试指令（62%）`, 'info')
     if (actual !== command) {
       motorVerified.value = { ...motorVerified.value, [command]: false }
       invalidatePreflightPermit()
@@ -2148,7 +2471,7 @@ function stopAllMotors(): void {
 }
 
 function repairMotorMapping(): void {
-  if (bridgeMode.value === 'live') {
+  if (bridgeMode.value === 'live' && !trainingHasInjection('motor_mapping')) {
     appendLog('真实 PX4 模式', 'V1 不在前端伪造映射修复；后续将通过输出函数参数完成。', 'warn')
     return
   }
@@ -2254,6 +2577,21 @@ function saveDebugReport(): void {
       permit: preflightSnapshot.value,
       checks: preflightChecks.value,
     },
+    training: activeTrainingCase.value ? {
+      case: {
+        id: activeTrainingCase.value.id,
+        title: activeTrainingCase.value.title,
+        category: activeTrainingCase.value.category,
+        difficulty: activeTrainingCase.value.difficulty,
+        recommended_minutes: activeTrainingCase.value.recommended_minutes,
+        fault_source: activeTrainingCase.value.fault_source,
+      },
+      elapsed_seconds: trainingElapsedSeconds.value,
+      hints_used: trainingHintsUsed.value,
+      wrong_operations: trainingWrongOperations.value,
+      visited_sections: trainingVisitedSections.value,
+      evaluation: trainingEvaluationPreview.value,
+    } : null,
     logs: logs.value,
   }
   const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' })
@@ -2268,6 +2606,9 @@ function saveDebugReport(): void {
 
 
 watch(activeSection, next => {
+  if (activeTrainingCase.value && !trainingVisitedSections.value.includes(next)) {
+    trainingVisitedSections.value = [...trainingVisitedSections.value, next]
+  }
   if (next === 'safety' && !safetyLoadedOnce.value) void loadSafetyParameters()
   if (next === 'rc' && !rcLoadedOnce.value) void loadRcParameters()
 })
@@ -2309,6 +2650,12 @@ watch(bridgeMode, (next, previous) => {
 
 onMounted(async () => {
   await assemblyStore.initialize()
+  try {
+    trainingCases.value = await loadFaultTrainingCases()
+    trainingCatalogError.value = ''
+  } catch (error) {
+    trainingCatalogError.value = errorText(error)
+  }
   preflightSnapshot.value = loadPreflightSnapshot(assemblyStore.activeAircraftId, aircraftFingerprint(assemblyStore.aircraft))
   restorePreflightVerification(preflightSnapshot.value)
   timer = window.setInterval(() => { clockTick.value += 1 }, 100)
@@ -2544,5 +2891,13 @@ td:first-child { color:#45baff;font-weight:800; }
 
 /* Pre-flight gate */
 .preflight-workbench{display:grid;gap:14px;min-height:0}.preflight-hero{display:flex;align-items:center;justify-content:space-between;padding:24px 26px;border-color:rgba(96,165,250,.28);background:linear-gradient(135deg,rgba(9,32,51,.96),rgba(7,22,36,.96))}.preflight-hero.ready{box-shadow:inset 4px 0 #48df8b}.preflight-hero.blocked{box-shadow:inset 4px 0 #ff6b62}.preflight-kicker{font-size:10px;letter-spacing:.18em;color:#55d9ff}.preflight-hero h2{margin:6px 0 8px;font-size:24px;color:#eef8ff}.preflight-hero p{max-width:760px;margin:0;color:#7897b5;line-height:1.65}.preflight-permit{display:flex;align-items:center;gap:12px;min-width:320px;justify-content:flex-end}.permit-ring{display:grid;place-items:center;width:54px;height:54px;border-radius:50%;font-size:25px;font-weight:800;border:1px solid}.permit-ring.pass{color:#48df8b;background:rgba(72,223,139,.09);border-color:rgba(72,223,139,.5)}.permit-ring.block{color:#ff6b62;background:rgba(255,94,87,.08);border-color:rgba(255,94,87,.45)}.preflight-permit small,.preflight-final-copy small{display:block;color:#7897b5}.preflight-permit b{display:block;margin-top:4px;color:#e9f5ff}.preflight-permit strong{font-size:29px;color:#55d9ff}.preflight-permit strong em{font-size:12px;color:#7897b5;font-style:normal}.preflight-check-surface,.preflight-aircraft-summary,.preflight-blocker-surface,.preflight-final-surface{padding:16px}.preflight-count-pill{padding:5px 10px;border-radius:999px;font-size:11px}.preflight-count-pill.ok{color:#48df8b;background:rgba(72,223,139,.09)}.preflight-count-pill.warn{color:#f0bd45;background:rgba(240,189,69,.09)}.preflight-check-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.preflight-check-card{display:grid;grid-template-columns:38px 1fr auto;gap:11px;align-items:center;padding:14px;border:1px solid var(--line);border-radius:10px;background:rgba(5,18,30,.54)}.preflight-check-card.pass{border-color:rgba(72,223,139,.25)}.preflight-check-card.block{border-color:rgba(255,94,87,.3)}.preflight-check-card.warn{border-color:rgba(240,189,69,.3)}.check-state-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:8px;background:rgba(120,151,181,.1);font-weight:800}.pass .check-state-icon{color:#48df8b}.block .check-state-icon{color:#ff6b62}.warn .check-state-icon{color:#f0bd45}.check-copy span{font-size:10px;color:#7897b5}.check-copy b{display:block;margin:3px 0;color:#e1effb}.check-copy small{display:block;color:#6f8aa4;line-height:1.45}.preflight-check-card button{padding:6px 10px;border:1px solid rgba(85,217,255,.24);border-radius:7px;background:rgba(40,168,255,.08);color:#73dfff}.preflight-lower-grid{display:grid;grid-template-columns:1fr 1.35fr;gap:14px}.preflight-aircraft-summary dl{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0}.preflight-aircraft-summary dl div{padding:10px;border-radius:8px;background:rgba(6,22,36,.62)}.preflight-aircraft-summary dt{font-size:10px;color:#7897b5}.preflight-aircraft-summary dd{margin:4px 0 0;color:#dceaf6;font-weight:700}.preflight-clear,.preflight-issue{display:flex;gap:10px;padding:11px;border-radius:8px;margin-bottom:8px}.preflight-clear{background:rgba(72,223,139,.07);color:#48df8b}.preflight-issue.block{background:rgba(255,94,87,.07);color:#ff8b84}.preflight-issue.warn{background:rgba(240,189,69,.07);color:#f0bd45}.preflight-clear small,.preflight-issue small{display:block;margin-top:3px;color:#7897b5}.preflight-final-surface{display:flex;align-items:center;justify-content:space-between;gap:16px}.preflight-final-copy b{color:#e9f5ff}.preflight-final-actions{display:flex;gap:9px}.preflight-final-actions button,.preflight-flight-button{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:0 16px;border-radius:8px;border:1px solid rgba(85,217,255,.28);background:rgba(40,168,255,.1);color:#bfeaff;text-decoration:none}.preflight-flight-button{background:#168ee0;color:white;border-color:#28a8ff}.preflight-flight-button.disabled,.right-actions .flight-action.disabled{opacity:.45;cursor:not-allowed}.right-actions button.flight-action{font:inherit}
+
+
+
+/* Fault Training V1 */
+.training-sidebar-section{position:relative}.training-side-title{display:flex;align-items:center;justify-content:space-between}.training-side-title small{color:#50c9f3;font-size:7px}.training-current-card{border-color:rgba(85,217,255,.42)!important;background:linear-gradient(135deg,rgba(23,115,168,.23),rgba(8,39,62,.75))!important}.training-current-card small{color:#7ddcff!important}.training-library-button{width:100%;display:grid;grid-template-columns:24px 1fr 12px;align-items:center;gap:7px;margin-top:7px;padding:9px 8px;border:1px dashed rgba(85,217,255,.28);border-radius:7px;background:rgba(16,66,98,.22);color:#bdeaff;text-align:left;cursor:pointer}.training-library-button>span{display:grid;place-items:center;width:22px;height:22px;border-radius:6px;background:rgba(40,168,255,.12);color:#55d9ff}.training-library-button div{display:grid;gap:1px}.training-library-button b{font-size:9px}.training-library-button small{color:#678da9;font-size:7px}.training-library-button strong{color:#55d9ff;font-size:16px}.training-library-button:hover{border-color:rgba(85,217,255,.55);background:rgba(20,91,132,.28)}.training-catalog-error{display:block;margin-top:6px;color:#ff9089;font-size:7px;line-height:1.4}
+.training-task-hud{display:grid;grid-template-columns:minmax(250px,1.35fr) minmax(330px,1fr) auto;gap:12px;align-items:center;margin-bottom:12px;padding:11px 13px;border:1px solid rgba(85,217,255,.25);border-radius:9px;background:linear-gradient(135deg,rgba(9,38,58,.96),rgba(8,26,42,.96));box-shadow:inset 3px 0 #25aef0}.training-task-main{display:flex;align-items:center;gap:10px;min-width:0}.training-case-code{flex:0 0 auto;padding:4px 7px;border-radius:6px;background:rgba(85,217,255,.1);color:#64dfff;font-size:8px;font-weight:800;letter-spacing:.05em}.training-task-main div{min-width:0;display:grid;gap:3px}.training-task-main b{color:#ecf8ff;font-size:11px}.training-task-main small{overflow:hidden;color:#7b9ab5;font-size:8px;line-height:1.4;text-overflow:ellipsis;white-space:nowrap}.training-task-meta{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.training-task-meta>div{display:grid;gap:2px;padding:7px 8px;border:1px solid rgba(92,142,181,.14);border-radius:6px;background:rgba(5,19,31,.55)}.training-task-meta span{color:#668aa7;font-size:6px}.training-task-meta b{overflow:hidden;color:#cfe8f8;font-size:8px;text-overflow:ellipsis;white-space:nowrap}.training-task-actions{display:grid;grid-template-columns:repeat(2,90px);gap:5px}.training-task-actions button{min-height:29px;border:1px solid rgba(87,154,202,.26);border-radius:6px;background:#0d2b42;color:#a9d3eb;font-size:7px;cursor:pointer}.training-task-actions button:hover{border-color:#2aaeff;color:white}.training-task-actions .training-submit{border-color:#249fdc;background:#116da3;color:#fff}.training-task-actions .training-exit{color:#93a8b9}.training-hint,.training-result{grid-column:1/-1;display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:6px}.training-hint{border:1px solid rgba(240,189,69,.25);background:rgba(111,80,25,.12);color:#d8b86d}.training-hint b{font-size:8px}.training-hint span{font-size:8px;line-height:1.45}.training-result{display:grid;grid-template-columns:1fr auto minmax(260px,1fr);border:1px solid rgba(255,112,99,.22);background:rgba(105,37,32,.1)}.training-result.passed{border-color:rgba(72,223,139,.24);background:rgba(34,113,72,.1)}.training-result div{display:grid;gap:2px}.training-result b{color:#f2f8fc;font-size:9px}.training-result small,.training-result>span{color:#7f9ab1;font-size:7px}.training-result strong{font-size:20px;color:#f3c85e}.training-result.passed strong{color:#58df91}.training-result strong em{font-size:9px;font-style:normal;color:#839caf}
+.training-library-backdrop{position:fixed;z-index:1000;inset:58px 0 0;display:grid;place-items:center;padding:26px;background:rgba(2,9,16,.72);backdrop-filter:blur(6px)}.training-library-panel{width:min(1180px,94vw);max-height:86vh;overflow:auto;border:1px solid rgba(85,217,255,.25);border-radius:14px;background:linear-gradient(180deg,#0a1b2b,#071420);box-shadow:0 28px 80px rgba(0,0,0,.42);color:#dcecf8}.training-library-panel>header{display:flex;justify-content:space-between;gap:20px;padding:22px 24px 16px;border-bottom:1px solid rgba(88,137,176,.15)}.training-library-panel header>div>span{color:#53d8ff;font-size:8px;font-weight:800;letter-spacing:.16em}.training-library-panel h2{margin:5px 0 6px;font-size:22px}.training-library-panel p{margin:0;color:#7694ad;font-size:10px}.training-close{width:34px;height:34px;border:1px solid rgba(113,155,190,.2);border-radius:8px;background:rgba(255,255,255,.04);color:#a8c2d6;font-size:22px;cursor:pointer}.training-filter-row{display:flex;gap:7px;padding:14px 24px}.training-filter-row button{padding:6px 12px;border:1px solid rgba(89,139,180,.2);border-radius:999px;background:rgba(8,29,47,.65);color:#7898b2;font-size:8px;cursor:pointer}.training-filter-row button.active{border-color:rgba(85,217,255,.45);background:rgba(29,126,179,.18);color:#82e4ff}.training-case-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding:0 24px 24px}.training-case-card{display:grid;gap:11px;padding:15px;border:1px solid rgba(91,143,183,.18);border-radius:10px;background:rgba(7,24,39,.8);box-shadow:0 8px 22px rgba(0,0,0,.12)}.training-case-card:hover{border-color:rgba(85,217,255,.32);transform:translateY(-1px)}.training-case-card-head{display:grid;grid-template-columns:34px 1fr auto;gap:9px;align-items:center}.training-case-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:8px;background:rgba(40,168,255,.11);color:#61dcff;font-size:17px}.training-case-card-head div{display:grid;gap:2px}.training-case-card-head small{color:#6586a2;font-size:7px}.training-case-card-head b{color:#e6f3fb;font-size:11px}.training-case-card-head strong{color:#efc45a;font-size:10px;letter-spacing:1px}.training-case-card>p{min-height:35px;margin:0;color:#8aa5bb;font-size:9px;line-height:1.55}.training-case-card dl{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0}.training-case-card dl div{padding:7px 8px;border-radius:6px;background:rgba(4,17,29,.7)}.training-case-card dt{color:#63839d;font-size:6px}.training-case-card dd{margin:3px 0 0;color:#bbd3e4;font-size:8px}.training-case-task{display:grid;gap:3px;padding:8px 9px;border-left:2px solid rgba(85,217,255,.36);background:rgba(20,75,108,.12)}.training-case-task b{color:#65dcff;font-size:7px}.training-case-task span{color:#839eb4;font-size:8px;line-height:1.5}.training-start-button{min-height:34px;border:1px solid #249fdc;border-radius:7px;background:linear-gradient(180deg,#168fd0,#0e6d9f);color:white;font-size:9px;font-weight:700;cursor:pointer}.training-start-button:hover{filter:brightness(1.08)}
+@media(max-width:1400px){.training-task-hud{grid-template-columns:1fr 1fr}.training-task-actions{grid-column:1/-1;grid-template-columns:repeat(4,1fr)}.training-case-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:980px){.training-case-grid{grid-template-columns:1fr}.training-task-meta{grid-template-columns:1fr 1fr}}
 
 </style>

@@ -1,0 +1,157 @@
+[
+  {
+    "id": "F01_COMPASS",
+    "title": "罗盘状态异常",
+    "category": "sensors",
+    "difficulty": 1,
+    "recommended_minutes": 10,
+    "icon": "◉",
+    "fault_source": "教学传感器异常注入",
+    "legacy_scenario": "compass",
+    "initial_section": "sensors",
+    "target_sections": ["sensors"],
+    "student_brief": {
+      "symptom": "飞行器定位状态异常，起飞前检查无法稳定通过。",
+      "task": "使用飞控与传感器调试工具定位异常，完成必要操作并重新验证。"
+    },
+    "injections": ["compass_fault"],
+    "success_conditions": [
+      {"key": "compass_repaired", "group": "repair"},
+      {"key": "sensor_verified", "group": "validation"}
+    ],
+    "hints": [
+      "观察磁场、航向和 EKF 状态之间是否存在异常关联。",
+      "如果异常集中在航向估计，可以考虑执行磁罗盘校准后重新检查。"
+    ]
+  },
+  {
+    "id": "F02_RC_REVERSE",
+    "title": "RC Roll 方向异常",
+    "category": "rc",
+    "difficulty": 1,
+    "recommended_minutes": 10,
+    "icon": "⌁",
+    "fault_source": "教学遥控参数草稿注入",
+    "legacy_scenario": "standard",
+    "initial_section": "rc",
+    "target_sections": ["rc"],
+    "student_brief": {
+      "symptom": "横滚摇杆输入与页面显示的控制方向相反。",
+      "task": "检查通道方向、行程和映射，修复后完成遥控系统验证。"
+    },
+    "injections": ["rc_roll_reverse"],
+    "success_conditions": [
+      {"key": "rc_roll_normal", "group": "repair"},
+      {"key": "rc_verified", "group": "validation"}
+    ],
+    "hints": [
+      "先确认 Roll 当前映射到哪一路，再观察该通道的 REV 设置。",
+      "修复方向后不要只看参数值，还要重新执行遥控系统验证。"
+    ]
+  },
+  {
+    "id": "F03_RC_MAPPING",
+    "title": "RC 主通道映射错误",
+    "category": "rc",
+    "difficulty": 2,
+    "recommended_minutes": 12,
+    "icon": "⇄",
+    "fault_source": "教学遥控参数草稿注入",
+    "legacy_scenario": "standard",
+    "initial_section": "rc",
+    "target_sections": ["rc"],
+    "student_brief": {
+      "symptom": "部分摇杆动作被解释成了错误的飞行控制轴。",
+      "task": "通过通道实时值和映射表定位错误，恢复主控制通道并验证。"
+    },
+    "injections": ["rc_mapping_swap"],
+    "success_conditions": [
+      {"key": "rc_mapping_standard", "group": "repair"},
+      {"key": "rc_verified", "group": "validation"}
+    ],
+    "hints": [
+      "不要先改端点，先观察 Roll/Pitch 分别由哪一路通道驱动。",
+      "标准教学配置使用 CH1 Roll、CH2 Pitch、CH3 Throttle、CH4 Yaw。"
+    ]
+  },
+  {
+    "id": "F04_MOTOR_MAPPING",
+    "title": "M1 / M3 电机映射错误",
+    "category": "power",
+    "difficulty": 2,
+    "recommended_minutes": 15,
+    "icon": "✤",
+    "fault_source": "教学执行机构映射注入",
+    "legacy_scenario": "mapping",
+    "initial_section": "power",
+    "target_sections": ["power"],
+    "student_brief": {
+      "symptom": "动力系统检查无法通过，单电机测试存在异常响应。",
+      "task": "依次测试执行机构，定位映射问题，修复并完成 M1-M4 验证。"
+    },
+    "injections": ["motor_mapping"],
+    "success_conditions": [
+      {"key": "motor_mapping_repaired", "group": "repair"},
+      {"key": "motors_verified", "group": "validation"}
+    ],
+    "hints": [
+      "不要一次启动全部电机，按 M1-M4 逐个执行单电机测试并记录实际响应。",
+      "指令电机与实际响应电机不一致时，优先检查执行机构映射。"
+    ]
+  },
+  {
+    "id": "F05_FAILSAFE",
+    "title": "Failsafe 配置异常",
+    "category": "safety",
+    "difficulty": 2,
+    "recommended_minutes": 15,
+    "icon": "◇",
+    "fault_source": "教学安全参数草稿注入",
+    "legacy_scenario": "failsafe",
+    "initial_section": "safety",
+    "target_sections": ["safety"],
+    "student_brief": {
+      "symptom": "安全策略检查发现多项风险，起飞前验证被阻断。",
+      "task": "检查遥控失联、低电量、返航与围栏策略，恢复合理配置并验证。"
+    },
+    "injections": ["failsafe_profile"],
+    "success_conditions": [
+      {"key": "safety_clean", "group": "repair"},
+      {"key": "safety_verified", "group": "validation"}
+    ],
+    "hints": [
+      "先检查电量阈值顺序、失联动作和地理围栏是否存在明显冲突。",
+      "返航高度不应达到或超过垂直围栏高度。"
+    ]
+  },
+  {
+    "id": "F06_INTEGRATED",
+    "title": "综合 Pre-Arm 故障",
+    "category": "integrated",
+    "difficulty": 3,
+    "recommended_minutes": 25,
+    "icon": "★",
+    "fault_source": "多模块教学故障组合注入",
+    "legacy_scenario": "mapping",
+    "initial_section": "preflight",
+    "target_sections": ["rc", "power", "safety", "preflight"],
+    "student_brief": {
+      "symptom": "无人机无法完成最终起飞前检查，但系统没有直接给出故障答案。",
+      "task": "自行选择调试路径，完成多模块诊断、修复和最终起飞许可验证。"
+    },
+    "injections": ["rc_roll_reverse", "motor_mapping", "failsafe_profile"],
+    "success_conditions": [
+      {"key": "rc_roll_normal", "group": "repair"},
+      {"key": "rc_verified", "group": "validation"},
+      {"key": "motor_mapping_repaired", "group": "repair"},
+      {"key": "motors_verified", "group": "validation"},
+      {"key": "safety_clean", "group": "repair"},
+      {"key": "safety_verified", "group": "validation"},
+      {"key": "preflight_passed", "group": "validation"}
+    ],
+    "hints": [
+      "综合故障通常不是一个模块的问题。先从起飞前检查中找出阻断项，再逐项回到对应调试工具。",
+      "至少检查遥控方向、动力映射和安全策略三个模块，不要只反复执行 Pre-Arm。"
+    ]
+  }
+]

@@ -31,7 +31,12 @@ export interface Px4Telemetry extends Px4Status {
     yawspeed: number
   }
   local_position: { x: number; y: number; z: number; vx: number; vy: number; vz: number }
-  global_position: { lat_deg: number | null; lon_deg: number | null; relative_alt_m: number | null }
+  global_position: {
+    lat_deg: number | null
+    lon_deg: number | null
+    relative_alt_m: number | null
+    alt_amsl_m?: number | null
+  }
   gps: { fix_type: number | null; satellites: number | null; eph: number | null }
   battery: { voltage_v: number | null; current_a: number | null; remaining: number | null }
   imu?: {
@@ -78,6 +83,18 @@ export interface Px4Telemetry extends Px4Status {
   prearm_ok: boolean
 }
 
+export interface Px4CommandResult {
+  accepted?: boolean
+  timeout?: boolean
+  command?: number
+  result?: number
+  progress?: number
+  relative_altitude_m?: number
+  home_altitude_amsl_m?: number
+  target_altitude_amsl_m?: number
+  [key: string]: unknown
+}
+
 function defaultBridgeBase(): string {
   const explicit = import.meta.env.VITE_PX4_BRIDGE_URL as string | undefined
   if (explicit) return explicit.replace(/\/$/, '')
@@ -109,18 +126,18 @@ export const px4Api = {
   }),
   disconnect: () => request<Px4Status>('/disconnect', { method: 'POST' }),
   requestStreams: () => request<{ ok: boolean }>('/request-streams', { method: 'POST' }),
-  arm: () => request<Record<string, unknown>>('/arm', { method: 'POST' }),
-  disarm: () => request<Record<string, unknown>>('/disarm', { method: 'POST' }),
-  takeoff: (altitudeM = 2) => request<Record<string, unknown>>('/takeoff', {
+  arm: () => request<Px4CommandResult>('/arm', { method: 'POST' }),
+  disarm: () => request<Px4CommandResult>('/disarm', { method: 'POST' }),
+  takeoff: (altitudeM = 2) => request<Px4CommandResult>('/takeoff', {
     method: 'POST',
     body: JSON.stringify({ altitude_m: altitudeM }),
   }),
-  land: () => request<Record<string, unknown>>('/land', { method: 'POST' }),
-  prearmCheck: () => request<Record<string, unknown>>('/prearm-check', { method: 'POST' }),
+  land: () => request<Px4CommandResult>('/land', { method: 'POST' }),
+  prearmCheck: () => request<Px4CommandResult>('/prearm-check', { method: 'POST' }),
   calibrateSensor: (sensor: Px4SensorKey) => request<{ accepted: boolean; timeout: boolean; command: number; result?: number; sensor: Px4SensorKey }>(`/sensors/${sensor}/calibrate`, {
     method: 'POST',
   }),
-  testMotor: (motor: string, value = .2, timeoutS = 1.5) => request<Record<string, unknown>>(`/motors/${motor}/test`, {
+  testMotor: (motor: string, value = .2, timeoutS = 1.5) => request<Px4CommandResult>(`/motors/${motor}/test`, {
     method: 'POST',
     body: JSON.stringify({ value, timeout_s: timeoutS }),
   }),
