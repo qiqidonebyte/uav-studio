@@ -357,24 +357,24 @@ function disposeObject(root: THREE.Object3D): void {
 
 function addLabelSprite(text: string, position: THREE.Vector3, color = '#1f4f8f'): void {
   const canvas = document.createElement('canvas')
-  canvas.width = 280
-  canvas.height = 54
+  canvas.width = 220
+  canvas.height = 42
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   ctx.fillStyle = 'rgba(255,255,255,.88)'
-  ctx.roundRect(2, 4, 274, 44, 8)
+  ctx.roundRect(2, 3, 216, 34, 7)
   ctx.fill()
   ctx.strokeStyle = 'rgba(120,145,175,.45)'
   ctx.stroke()
   ctx.fillStyle = color
-  ctx.font = '600 21px Microsoft YaHei, sans-serif'
-  ctx.fillText(text, 12, 33)
+  ctx.font = '600 16px Microsoft YaHei, sans-serif'
+  ctx.fillText(text, 10, 27)
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
   const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false })
   const sprite = new THREE.Sprite(material)
-  sprite.scale.set(0.74, 0.145, 1)
+  sprite.scale.set(0.5, 0.096, 1)
   sprite.position.copy(position)
   sprite.renderOrder = 8
   overlayGroup.add(sprite)
