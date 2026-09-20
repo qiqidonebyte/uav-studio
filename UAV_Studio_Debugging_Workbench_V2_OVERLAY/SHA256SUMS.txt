@@ -1,0 +1,8 @@
+dfe529fe50fa5340b8b3d113fe33324d8d10ee30166f045a37a86918936ad694  ./PATCH_README_SYSTEM_DEBUGGING_V2.md
+3f1301bfa55b5da62eaa0e5a5eb573bcaa3efa6872c933a10ecfe7367cd109b6  ./VERIFICATION_REPORT_SYSTEM_DEBUGGING_V2.md
+52a4139a7c81976ae640fad687de9dc01ce231d82a9c39e90d293756639e7ffe  ./frontend/src/App.vue
+cd2b7241ba7e0cc2d370e206b9a5a848a5ea9ee45d167063815b52a694a9635d  ./frontend/src/components/DebugMotorScene.vue
+8cf2ac977c57b56ed7aaf8bc5325771cfcc7a3bf81a0977bfb5b87005eb92955  ./frontend/src/router/index.ts
+833b4eeecbd0f440724f17cbe4d5d20cc4d1e36e4ce267668ea1fd4ef51c1fc4  ./frontend/src/utils/debugging.ts
+5b3b8cc1725d760e919594210c272a56a9672684890e21e7377f4b477622a29a  ./frontend/src/views/Debugging.vue
+425eb5aee55a6be8be045b6c7f3ae1651b8b07bb70d1c7d48f95517c5a631be2  ./frontend/tests/debugging-workbench.test.ts

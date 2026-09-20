@@ -7,7 +7,7 @@
         <img class="campus-mark" src="/branding/zjitc-campus-mark.svg" alt="浙江工贸" />
         <div class="brand-copy">
           <div class="brand-mainline"><strong>UAV Studio</strong><span>浙江工贸</span></div>
-          <small>无人机数字设计与飞行验证平台</small>
+          <small>无人机数字设计与装调检修教学平台</small>
         </div>
       </div>
 
@@ -21,6 +21,10 @@
       </nav>
 
       <div class="top-status">
+        <div v-if="route.path === '/debugging'" class="debug-bridge-chips">
+          <span><i></i>PX4 SITL · 教学模拟</span>
+          <span class="muted"><i></i>Gazebo · 待接入</span>
+        </div>
         <RouterLink
           class="aircraft-chip aircraft-link design-switcher"
           to="/aircraft"
@@ -49,13 +53,14 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import { useAssemblyStore } from './stores/assembly'
 import { useSimulationStore } from './stores/simulation'
 import { useSettingsStore } from './stores/settings'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const simulationStore = useSimulationStore()
 const assemblyStore = useAssemblyStore()
@@ -128,6 +133,7 @@ onBeforeUnmount(() => {
 .brand-mainline span { flex:0 0 auto; padding:1px 6px; border-radius:999px; border:1px solid rgba(98,205,238,.24); background:rgba(51,179,222,.12); color:#8ae8ff; font-size:9px; line-height:15px; font-weight:700; }
 .brand-copy small { display:block; min-width:0; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:rgba(222,233,249,.72); font-size:9px; line-height:12px; font-weight:500; }
 .aircraft-link { text-decoration:none; }
+.debug-bridge-chips{display:flex;align-items:center;gap:5px}.debug-bridge-chips span{display:inline-flex;align-items:center;gap:5px;height:25px;padding:0 8px;border:1px solid rgba(78,210,140,.22);border-radius:999px;background:rgba(34,132,83,.10);color:#83e9b0;font-size:8px;font-weight:800;white-space:nowrap}.debug-bridge-chips span.muted{border-color:rgba(125,149,182,.18);background:rgba(255,255,255,.04);color:#8ba6be}.debug-bridge-chips i{width:6px;height:6px;border-radius:50%;background:#53dd91}.debug-bridge-chips .muted i{background:#e6b64d}
 .design-switcher {display:flex;align-items:center;gap:9px;min-width:0;min-height:38px;padding:4px 8px 4px 11px;border-radius:10px;transition:background .18s ease,border-color .18s ease,transform .18s ease}
 .design-switcher:hover {transform:translateY(-1px);border-color:rgba(103,232,249,.28);background:rgba(255,255,255,.10)}
 .design-switcher.router-link-active {border-color:rgba(103,232,249,.30);background:rgba(8,145,178,.13)}
@@ -145,6 +151,7 @@ onBeforeUnmount(() => {
 .user-chip.router-link-active { border-color:rgba(103,232,249,.28); color:#cffafe; background:rgba(8,145,178,.12); }
 .logout-chip{height:30px;border:1px solid rgba(151,177,211,.18);border-radius:999px;background:transparent;color:rgba(220,236,255,.72);padding:0 8px;font-size:8px;font-weight:700;cursor:pointer}.logout-chip:hover{border-color:rgba(248,113,113,.3);background:rgba(248,113,113,.08);color:#ffd6d1}
 @keyframes savePulse { 50% { opacity:.45; transform:scale(.75); } }
-@media(max-width:1400px){.design-switcher .save-pill{display:none}.topbar nav{gap:6px}.topbar nav a{padding:0 8px}}
-@media(max-width:1280px){.brand-mainline span{display:none}.user-chip small,.logout-chip{display:none}}
+@media(max-width:1600px){.debug-bridge-chips{display:none}}
+@media(max-width:1500px){.design-switcher .save-pill{display:none}.topbar nav{gap:4px}.topbar nav a{padding:0 6px;font-size:9px}}
+@media(max-width:1320px){.brand-mainline span{display:none}.user-chip small,.logout-chip{display:none}.brand-copy small{max-width:150px}}
 </style>
