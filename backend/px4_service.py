@@ -129,6 +129,11 @@ def prearm_check() -> dict[str, Any]:
     return run(bridge.prearm_check)
 
 
+@app.post("/api/px4/sensors/{sensor}/calibrate")
+def calibrate_sensor(sensor: str) -> dict[str, Any]:
+    return run(lambda: bridge.calibrate_sensor(sensor))
+
+
 @app.post("/api/px4/motors/{motor}/test")
 def motor_test(motor: str, request: MotorTestRequest) -> dict[str, Any]:
     motor_name = motor.strip().upper()

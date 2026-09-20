@@ -15,11 +15,13 @@ export function calculateDebugScore(
   scenario: DebugScenario,
   mappingRepaired: boolean,
   assemblyPassed: boolean,
+  compassRepaired = false,
+  failsafeRepaired = false,
 ): number {
   let value = 100
   if (scenario === 'mapping' && !mappingRepaired) value -= 22
-  if (scenario === 'compass') value -= 18
-  if (scenario === 'failsafe') value -= 16
+  if (scenario === 'compass' && !compassRepaired) value -= 18
+  if (scenario === 'failsafe' && !failsafeRepaired) value -= 16
   if (!assemblyPassed) value -= 20
   return Math.max(0, value)
 }

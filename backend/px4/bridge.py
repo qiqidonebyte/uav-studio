@@ -45,10 +45,65 @@ class _TelemetryState:
     battery: dict[str, float | int | None] = field(default_factory=lambda: {
         "voltage_v": None, "current_a": None, "remaining": None,
     })
+    imu: dict[str, Any] = field(default_factory=lambda: {
+        "accel_m_s2": {"x": None, "y": None, "z": None},
+        "gyro_rad_s": {"x": None, "y": None, "z": None},
+        "temperature_c": None,
+        "source": None,
+    })
+    magnetometer: dict[str, float | None] = field(default_factory=lambda: {
+        "x_gauss": None, "y_gauss": None, "z_gauss": None,
+        "field_strength_gauss": None, "heading_deg": None,
+    })
+    barometer: dict[str, float | None] = field(default_factory=lambda: {
+        "absolute_pressure_hpa": None, "pressure_alt_m": None, "temperature_c": None,
+    })
+    sensor_flags: dict[str, int] = field(default_factory=lambda: {
+        "present": 0, "enabled": 0, "health": 0,
+    })
+    imu_at: float = 0.0
+    magnetometer_at: float = 0.0
+    barometer_at: float = 0.0
+    rc_channels: list[int | None] = field(default_factory=lambda: [None] * 18)
+    rc_channel_count: int = 0
+    rc_rssi_percent: float | None = None
+    rc_at: float = 0.0
+    manual_control: dict[str, int | None] = field(default_factory=lambda: {
+        "x": None, "y": None, "z": None, "r": None, "buttons": None,
+    })
+    manual_control_at: float = 0.0
     motor_outputs: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
     estimator_flags: int | None = None
     last_statustext: str = ""
     last_statustext_at: float = 0.0
+
+
+SENSOR_BITS: dict[str, int] = {
+    "gyro": 1 << 0,
+    "accelerometer": 1 << 1,
+    "magnetometer": 1 << 2,
+    "barometer": 1 << 3,
+    "gps": 1 << 5,
+}
+
+
+def _age_seconds(timestamp: float) -> float | None:
+    return None if timestamp <= 0 else max(0.0, time.monotonic() - timestamp)
+
+
+def decode_sensor_health(flags: dict[str, int]) -> dict[str, dict[str, bool | None]]:
+    present_mask = int(flags.get("present", 0) or 0)
+    enabled_mask = int(flags.get("enabled", 0) or 0)
+    health_mask = int(flags.get("health", 0) or 0)
+    known = present_mask != 0 or enabled_mask != 0 or health_mask != 0
+    result: dict[str, dict[str, bool | None]] = {}
+    for name, bit in SENSOR_BITS.items():
+        result[name] = {
+            "present": bool(present_mask & bit) if known else None,
+            "enabled": bool(enabled_mask & bit) if known else None,
+            "healthy": bool(health_mask & bit) if known else None,
+        }
+    return result
 
 
 class Px4Bridge:
@@ -169,6 +224,60 @@ class Px4Bridge:
                     "pitchspeed": float(message.pitchspeed),
                     "yawspeed": float(message.yawspeed),
                 }
+                state.magnetometer["heading_deg"] = (math.degrees(float(message.yaw)) + 360.0) % 360.0
+            elif msg_type == "HIGHRES_IMU":
+                state.imu = {
+                    "accel_m_s2": {
+                        "x": float(message.xacc), "y": float(message.yacc), "z": float(message.zacc),
+                    },
+                    "gyro_rad_s": {
+                        "x": float(message.xgyro), "y": float(message.ygyro), "z": float(message.zgyro),
+                    },
+                    "temperature_c": float(message.temperature),
+                    "source": "HIGHRES_IMU",
+                }
+                xmag, ymag, zmag = float(message.xmag), float(message.ymag), float(message.zmag)
+                state.magnetometer.update({
+                    "x_gauss": xmag, "y_gauss": ymag, "z_gauss": zmag,
+                    "field_strength_gauss": math.sqrt(xmag * xmag + ymag * ymag + zmag * zmag),
+                })
+                state.barometer.update({
+                    "absolute_pressure_hpa": float(message.abs_pressure),
+                    "pressure_alt_m": float(message.pressure_alt),
+                    "temperature_c": float(message.temperature),
+                })
+                state.imu_at = state.magnetometer_at = state.barometer_at = now
+            elif msg_type == "SCALED_IMU":
+                # MAVLink SCALED_IMU: acceleration in mg, angular rate in mrad/s, magnetic field in mGauss.
+                state.imu = {
+                    "accel_m_s2": {
+                        "x": float(message.xacc) * 9.80665 / 1000.0,
+                        "y": float(message.yacc) * 9.80665 / 1000.0,
+                        "z": float(message.zacc) * 9.80665 / 1000.0,
+                    },
+                    "gyro_rad_s": {
+                        "x": float(message.xgyro) / 1000.0,
+                        "y": float(message.ygyro) / 1000.0,
+                        "z": float(message.zgyro) / 1000.0,
+                    },
+                    "temperature_c": (float(getattr(message, "temperature", 0)) / 100.0) if getattr(message, "temperature", 0) else None,
+                    "source": "SCALED_IMU",
+                }
+                xmag = float(message.xmag) / 1000.0
+                ymag = float(message.ymag) / 1000.0
+                zmag = float(message.zmag) / 1000.0
+                state.magnetometer.update({
+                    "x_gauss": xmag, "y_gauss": ymag, "z_gauss": zmag,
+                    "field_strength_gauss": math.sqrt(xmag * xmag + ymag * ymag + zmag * zmag),
+                })
+                state.imu_at = state.magnetometer_at = now
+            elif msg_type == "SCALED_PRESSURE":
+                temperature = getattr(message, "temperature", None)
+                state.barometer.update({
+                    "absolute_pressure_hpa": float(message.press_abs),
+                    "temperature_c": None if temperature is None else float(temperature) / 100.0,
+                })
+                state.barometer_at = now
             elif msg_type == "LOCAL_POSITION_NED":
                 state.local_position = {
                     "x": float(message.x),
@@ -192,6 +301,27 @@ class Px4Bridge:
                     "satellites": satellites,
                     "eph": eph,
                 }
+            elif msg_type == "RC_CHANNELS":
+                count = int(getattr(message, "chancount", 0) or 0)
+                channels: list[int | None] = []
+                for index in range(1, 19):
+                    raw = int(getattr(message, f"chan{index}_raw", 65535) or 65535)
+                    channels.append(None if raw in {0, 65535} else raw)
+                rssi_value = getattr(message, "rssi", 255)
+                rssi_raw = 255 if rssi_value is None else int(rssi_value)
+                state.rc_channels = channels
+                state.rc_channel_count = max(0, min(18, count))
+                state.rc_rssi_percent = None if rssi_raw == 255 else max(0.0, min(100.0, rssi_raw * 100.0 / 254.0))
+                state.rc_at = now
+            elif msg_type == "MANUAL_CONTROL":
+                state.manual_control = {
+                    "x": int(getattr(message, "x", 0)),
+                    "y": int(getattr(message, "y", 0)),
+                    "z": int(getattr(message, "z", 0)),
+                    "r": int(getattr(message, "r", 0)),
+                    "buttons": int(getattr(message, "buttons", 0)),
+                }
+                state.manual_control_at = now
             elif msg_type == "SYS_STATUS":
                 voltage = None if int(message.voltage_battery) == 65535 else float(message.voltage_battery) / 1000.0
                 current = None if int(message.current_battery) == -1 else float(message.current_battery) / 100.0
@@ -200,6 +330,11 @@ class Px4Bridge:
                     "voltage_v": voltage,
                     "current_a": current,
                     "remaining": remaining,
+                }
+                state.sensor_flags = {
+                    "present": int(getattr(message, "onboard_control_sensors_present", 0) or 0),
+                    "enabled": int(getattr(message, "onboard_control_sensors_enabled", 0) or 0),
+                    "health": int(getattr(message, "onboard_control_sensors_health", 0) or 0),
                 }
             elif msg_type == "EXTENDED_SYS_STATE":
                 state.landed_state = int(message.landed_state)
@@ -300,6 +435,28 @@ class Px4Bridge:
                 "global_position": dict(state.global_position),
                 "gps": dict(state.gps),
                 "battery": dict(state.battery),
+                "imu": {
+                    "accel_m_s2": dict(state.imu["accel_m_s2"]),
+                    "gyro_rad_s": dict(state.imu["gyro_rad_s"]),
+                    "temperature_c": state.imu["temperature_c"],
+                    "source": state.imu["source"],
+                },
+                "magnetometer": dict(state.magnetometer),
+                "barometer": dict(state.barometer),
+                "sensor_health": decode_sensor_health(state.sensor_flags),
+                "sensor_data_age_s": {
+                    "imu": _age_seconds(state.imu_at),
+                    "magnetometer": _age_seconds(state.magnetometer_at),
+                    "barometer": _age_seconds(state.barometer_at),
+                },
+                "rc": {
+                    "channel_count": state.rc_channel_count,
+                    "channels_us": list(state.rc_channels),
+                    "rssi_percent": state.rc_rssi_percent,
+                    "age_s": _age_seconds(state.rc_at),
+                    "manual_control": dict(state.manual_control),
+                    "manual_control_age_s": _age_seconds(state.manual_control_at),
+                },
                 "motors": {"outputs": list(state.motor_outputs)},
                 "estimator": {
                     "flags": state.estimator_flags,
@@ -318,9 +475,14 @@ class Px4Bridge:
             "GLOBAL_POSITION_INT",
             "SYS_STATUS",
             "GPS_RAW_INT",
+            "HIGHRES_IMU",
+            "SCALED_IMU",
+            "SCALED_PRESSURE",
             "EXTENDED_SYS_STATE",
             "ACTUATOR_OUTPUT_STATUS",
             "ESTIMATOR_STATUS",
+            "RC_CHANNELS",
+            "MANUAL_CONTROL",
         )
         for name in names:
             message_id = getattr(mavutil.mavlink, f"MAVLINK_MSG_ID_{name}", None)
@@ -424,6 +586,24 @@ class Px4Bridge:
             "value": value,
             "timeout_s": timeout_s,
         }
+
+    def calibrate_sensor(self, sensor: str) -> dict[str, Any]:
+        if mavutil is None:
+            raise Px4BridgeError("pymavlink 未安装，请先执行 pip install -r requirements.txt")
+        key = sensor.strip().lower()
+        if self.telemetry()["armed"]:
+            raise Px4BridgeError("传感器校准要求飞机处于未解锁状态")
+        params: dict[str, list[float]] = {
+            "gyro": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            "compass": [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            "barometer": [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+            "accelerometer": [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        }
+        if key not in params:
+            raise Px4BridgeError("sensor 必须为 gyro/accelerometer/compass/barometer")
+        command = int(getattr(mavutil.mavlink, "MAV_CMD_PREFLIGHT_CALIBRATION", 241))
+        result = self._command(command, params[key], timeout=5.0)
+        return {**result, "sensor": key}
 
     def get_parameter(self, name: str, timeout: float = 2.5) -> dict[str, Any]:
         connection = self._require_connection()

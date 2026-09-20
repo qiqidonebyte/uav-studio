@@ -15,6 +15,16 @@ describe('debugging workbench teaching scenarios', () => {
     expect(calculateDebugScore('standard', false, true)).toBe(100)
     expect(calculateDebugScore('mapping', false, true)).toBe(78)
     expect(calculateDebugScore('mapping', true, true)).toBe(100)
-    expect(calculateDebugScore('failsafe', false, false)).toBe(64)
+    expect(calculateDebugScore('failsafe', false, false, false, false)).toBe(64)
+  })
+
+  it('restores the failsafe teaching score after safety repair', () => {
+    expect(calculateDebugScore('failsafe', false, true, false, false)).toBe(84)
+    expect(calculateDebugScore('failsafe', false, true, false, true)).toBe(100)
+  })
+
+  it('restores the compass teaching score after calibration', () => {
+    expect(calculateDebugScore('compass', false, true, false)).toBe(82)
+    expect(calculateDebugScore('compass', false, true, true)).toBe(100)
   })
 })

@@ -12,6 +12,14 @@ export interface Px4Status {
   uptime_s: number
 }
 
+export type Px4SensorKey = 'gyro' | 'accelerometer' | 'compass' | 'barometer'
+
+export interface Px4SensorHealthFlag {
+  present: boolean | null
+  enabled: boolean | null
+  healthy: boolean | null
+}
+
 export interface Px4Telemetry extends Px4Status {
   landed_state: number | null
   attitude: {
@@ -26,6 +34,44 @@ export interface Px4Telemetry extends Px4Status {
   global_position: { lat_deg: number | null; lon_deg: number | null; relative_alt_m: number | null }
   gps: { fix_type: number | null; satellites: number | null; eph: number | null }
   battery: { voltage_v: number | null; current_a: number | null; remaining: number | null }
+  imu?: {
+    accel_m_s2: { x: number | null; y: number | null; z: number | null }
+    gyro_rad_s: { x: number | null; y: number | null; z: number | null }
+    temperature_c: number | null
+    source: string | null
+  }
+  magnetometer?: {
+    x_gauss: number | null
+    y_gauss: number | null
+    z_gauss: number | null
+    field_strength_gauss: number | null
+    heading_deg: number | null
+  }
+  barometer?: {
+    absolute_pressure_hpa: number | null
+    pressure_alt_m: number | null
+    temperature_c: number | null
+  }
+  sensor_health?: {
+    gyro: Px4SensorHealthFlag
+    accelerometer: Px4SensorHealthFlag
+    magnetometer: Px4SensorHealthFlag
+    barometer: Px4SensorHealthFlag
+    gps: Px4SensorHealthFlag
+  }
+  sensor_data_age_s?: {
+    imu: number | null
+    magnetometer: number | null
+    barometer: number | null
+  }
+  rc?: {
+    channel_count: number
+    channels_us: Array<number | null>
+    rssi_percent: number | null
+    age_s: number | null
+    manual_control: { x: number | null; y: number | null; z: number | null; r: number | null; buttons: number | null }
+    manual_control_age_s: number | null
+  }
   motors: { outputs: number[] }
   estimator: { flags: number | null; ok: boolean | null }
   statustext: string
@@ -71,6 +117,9 @@ export const px4Api = {
   }),
   land: () => request<Record<string, unknown>>('/land', { method: 'POST' }),
   prearmCheck: () => request<Record<string, unknown>>('/prearm-check', { method: 'POST' }),
+  calibrateSensor: (sensor: Px4SensorKey) => request<{ accepted: boolean; timeout: boolean; command: number; result?: number; sensor: Px4SensorKey }>(`/sensors/${sensor}/calibrate`, {
+    method: 'POST',
+  }),
   testMotor: (motor: string, value = .2, timeoutS = 1.5) => request<Record<string, unknown>>(`/motors/${motor}/test`, {
     method: 'POST',
     body: JSON.stringify({ value, timeout_s: timeoutS }),
