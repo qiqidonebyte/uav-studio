@@ -1,0 +1,10 @@
+.git
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+frontend/node_modules
+frontend/dist
+data/uavstudio.db
+data/simulations/*.json
+*.zip
+artifacts

@@ -5,10 +5,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt /app/backend/requirements.txt
+COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 
-COPY . /app/backend
+COPY backend /app/backend
+COPY frontend/public/models/uav/v1_1 /app/frontend/public/models/uav/v1_1
 
 EXPOSE 8000
 
