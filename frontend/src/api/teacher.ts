@@ -4,6 +4,8 @@ import type {
   AssignmentView,
   ClassroomView,
   EnrollmentView,
+  GradebookView,
+  ClassAnalytics,
   StudentAssignmentView,
   StudentSummary,
   TeacherOverview,
@@ -46,6 +48,15 @@ export const teacherApi = {
   async students(classId?: number): Promise<StudentSummary[]> {
     return (await api.get<StudentSummary[]>('/teacher/students', { params: classId ? { class_id: classId } : undefined })).data
   },
+  async gradebook(classId: number): Promise<GradebookView> {
+    return (await api.get<GradebookView>('/teacher/gradebook', { params: { class_id: classId } })).data
+  },
+  async analytics(classId: number): Promise<ClassAnalytics> {
+    return (await api.get<ClassAnalytics>('/teacher/analytics', { params: { class_id: classId } })).data
+  },
+  async exportGradebook(classId: number): Promise<Blob> {
+    return (await api.get('/teacher/gradebook/export.csv', { params: { class_id: classId }, responseType: 'blob' })).data as Blob
+  },
   async adminUsers(): Promise<AdminUserView[]> {
     return (await api.get<AdminUserView[]>('/admin/users')).data
   },
@@ -79,6 +90,18 @@ export const studentTrainingApi = {
     payload?: Record<string, unknown>
   }): Promise<TrainingEventView> {
     return (await api.post<TrainingEventView>(`/training/runs/${runId}/events`, payload)).data
+  },
+  async progressRun(runId: number, payload: {
+    passed?: boolean
+    score: number
+    elapsed_seconds: number
+    hints_used: number
+    wrong_operations: number
+    prearm_passed: boolean
+    flight_validation_passed?: boolean
+    result: Record<string, unknown>
+  }): Promise<TrainingRunView> {
+    return (await api.post<TrainingRunView>(`/training/runs/${runId}/progress`, payload)).data
   },
   async submitRun(runId: number, payload: {
     passed: boolean

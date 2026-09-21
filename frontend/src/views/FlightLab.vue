@@ -3,6 +3,11 @@
     <aside class="panel left-panel flight-control-panel">
       <section class="panel-section">
         <h3>{{ px4Mode ? 'PX4 飞行验证' : '实验控制' }}</h3>
+        <div v-if="assignedRunId" :class="['course-flight-banner', { passed: flightValidationReported }]">
+          <b>{{ flightValidationReported ? '课程飞行验证已记录' : '课程实训 · 飞行验证阶段' }}</b>
+          <small>{{ flightValidationMessage || '按 解锁 → 起飞 → 悬停 → 降落 完成闭环，系统将自动回写 TrainingRun。' }}</small>
+          <button v-if="flightLandCommanded && !flightValidationReported" :disabled="flightValidationReporting" @click="maybeReportFlightValidation">{{ flightValidationReporting ? '同步中…' : '重新同步飞行结果' }}</button>
+        </div>
 
         <div class="control-block">
           <span class="control-label">{{ px4Mode ? '数据源' : '仿真' }}</span>
@@ -87,8 +92,8 @@
             <button data-testid="flight-arm" class="secondary-action" :disabled="!demoControls.canArm" @click="performDemo(store.arm)">{{ store.telemetry.armed ? '已解锁' : '解锁' }}</button>
             <label class="field-row"><span>目标高度</span><div><input v-model.number="store.targetAltitude" type="number" min="0.5" max="120" step="0.5"/><em>m</em></div></label>
             <div class="button-grid">
-              <button data-testid="flight-takeoff" class="primary-blue" :disabled="!demoControls.canTakeoff" @click="performDemo(store.takeoff)">起飞</button>
-              <button data-testid="flight-land" :disabled="!demoControls.canLand" @click="performDemo(store.land)">降落</button>
+              <button data-testid="flight-takeoff" class="primary-blue" :disabled="!demoControls.canTakeoff" @click="performDemo(takeoffDemo)">起飞</button>
+              <button data-testid="flight-land" :disabled="!demoControls.canLand" @click="performDemo(landDemo)">降落</button>
             </div>
           </template>
 
@@ -289,11 +294,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import DroneScene from '../components/DroneScene.vue'
 import LocalFlightMap from '../components/LocalFlightMap.vue'
 import RealtimeCharts from '../components/RealtimeCharts.vue'
 import { px4Api, type Px4CommandResult, type Px4Telemetry } from '../api/px4'
+import { studentTrainingApi } from '../api/teacher'
 import { useAssemblyStore } from '../stores/assembly'
 import { useSimulationStore } from '../stores/simulation'
 import { useSettingsStore } from '../stores/settings'
@@ -301,7 +308,9 @@ import type { TelemetryFrame } from '../types/telemetry'
 import { flightControlAvailability } from '../utils/flightControlGuards'
 import { aircraftFingerprint, loadPreflightSnapshot, type PreflightSnapshot } from '../utils/preflight'
 import { landedStateText, px4IsAirborne, px4TelemetryToFrame } from '../utils/px4Flight'
+import { flightValidationReady } from '../utils/trainingFlow'
 
+const route = useRoute()
 const assemblyStore = useAssemblyStore()
 const store = useSimulationStore()
 const settingsStore = useSettingsStore()
@@ -320,12 +329,25 @@ const px4StreamsRequested = ref(false)
 let px4PollTimer: number | null = null
 let px4Polling = false
 
+const assignedRunId = computed(() => {
+  const raw = Array.isArray(route.query.run) ? route.query.run[0] : route.query.run
+  const value = Number(raw)
+  return Number.isInteger(value) && value > 0 ? value : null
+})
+const flightTakeoffObserved = ref(false)
+const flightHoverObserved = ref(false)
+const flightLandCommanded = ref(false)
+const flightValidationReported = ref(false)
+const flightValidationReporting = ref(false)
+const flightValidationMessage = ref('')
+
 const assemblyReady = computed(() => assemblyStore.validation.passed && assemblyStore.engineering !== null)
 const preflightReady = computed(() => Boolean(preflightSnapshot.value?.passed))
 const flightReady = computed(() => assemblyReady.value && preflightReady.value)
 const px4Mode = computed(() => preflightSnapshot.value?.bridge_mode === 'live')
 const px4Connected = computed(() => Boolean(px4Telemetry.value?.connected))
 const px4Airborne = computed(() => px4IsAirborne(px4Telemetry.value))
+const activeAirborne = computed(() => px4Mode.value ? px4Airborne.value : store.airborne)
 
 const demoControls = computed(() => flightControlAvailability({
   assemblyReady: flightReady.value,
@@ -420,6 +442,18 @@ onMounted(async () => {
     aircraftFingerprint(assemblyStore.aircraft),
   )
   viewMode.value = settingsStore.settings.flight.default_view
+
+  if (assignedRunId.value) {
+    try {
+      const detail = await studentTrainingApi.runDetail(assignedRunId.value)
+      flightValidationReported.value = detail.run.flight_validation_passed
+      flightValidationMessage.value = detail.run.flight_validation_passed
+        ? `已通过 · 当前课程成绩 ${detail.run.score ?? '—'}`
+        : `当前阶段：${detail.run.stage}`
+    } catch (error) {
+      flightValidationMessage.value = error instanceof Error ? error.message : String(error)
+    }
+  }
 
   if (px4Mode.value) {
     store.targetAltitude = 2
@@ -618,6 +652,7 @@ async function takeoffPx4(): Promise<void> {
 async function landPx4(): Promise<void> {
   const result = await px4Api.land()
   ensureAccepted(result, 'PX4 降落')
+  flightLandCommanded.value = true
   await delay(350)
   await pollPx4()
 }
@@ -632,6 +667,52 @@ async function applyPx4Wind(): Promise<void> {
   await px4Api.setParameter('SIH_WIND_E', east)
   await pollPx4()
 }
+
+async function takeoffDemo(): Promise<void> {
+  await store.takeoff()
+}
+
+async function landDemo(): Promise<void> {
+  await store.land()
+  flightLandCommanded.value = true
+}
+
+async function maybeReportFlightValidation(): Promise<void> {
+  if (!assignedRunId.value || flightValidationReported.value || flightValidationReporting.value) return
+  const ready = flightValidationReady({
+    takeoffObserved: flightTakeoffObserved.value,
+    hoverObserved: flightHoverObserved.value,
+    landCommanded: flightLandCommanded.value,
+    airborne: activeAirborne.value,
+    landedState: px4Mode.value ? px4Telemetry.value?.landed_state : null,
+    armed: activeTelemetry.value.armed,
+  })
+  if (!ready) return
+  flightValidationReporting.value = true
+  try {
+    const run = await studentTrainingApi.flightValidation(
+      assignedRunId.value,
+      true,
+      `${px4Mode.value ? 'PX4 SIH' : '教学模拟'}：起飞 → 悬停 → 降落验证完成`,
+    )
+    flightValidationReported.value = true
+    flightValidationMessage.value = `闭环完成 · 最终课程成绩 ${run.score ?? '—'}/100`
+  } catch (error) {
+    flightValidationMessage.value = `飞行结果回写失败：${error instanceof Error ? error.message : String(error)}`
+  } finally {
+    flightValidationReporting.value = false
+  }
+}
+
+watch(activeAirborne, airborne => {
+  if (airborne) flightTakeoffObserved.value = true
+  void maybeReportFlightValidation()
+})
+watch(() => activeTelemetry.value.flight_mode, mode => {
+  if (mode === 'HOVERING') flightHoverObserved.value = true
+  void maybeReportFlightValidation()
+})
+watch(() => activeTelemetry.value.armed, () => { void maybeReportFlightValidation() })
 
 async function applyPendingTarget(): Promise<void> {
   if (pendingTarget.value) await store.setTarget(pendingTarget.value.x, pendingTarget.value.y)
@@ -663,6 +744,14 @@ function deg(radians: number): string {
 </script>
 
 <style scoped>
+.course-flight-banner {
+  display:grid; gap:3px; margin:0 0 9px; padding:9px 10px; border:1px solid #e6c978;
+  border-radius:8px; background:#fff9e8; color:#7c5b12;
+}
+.course-flight-banner.passed { border-color:#b9dfc8; background:#effaf4; color:#247148; }
+.course-flight-banner b { font-size:9px; }
+.course-flight-banner small { font-size:8px; line-height:1.45; }
+.course-flight-banner button { justify-self:start; margin-top:3px; border:1px solid currentColor; border-radius:6px; background:transparent; color:inherit; padding:4px 7px; font-size:7px; cursor:pointer; }
 .flight-control-panel button:disabled {
   cursor:not-allowed!important;
   opacity:1!important;

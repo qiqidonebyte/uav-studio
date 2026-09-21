@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import csv
+import io
 import secrets
 from datetime import datetime, timezone
 from typing import Callable, Iterator, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -23,6 +25,13 @@ from backend.training.catalog import FaultTrainingCase, load_training_cases
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+DEFAULT_SCORE_WEIGHTS = {
+    "case_score": 70.0,
+    "flight_validation": 20.0,
+    "operation_norm": 10.0,
+}
 
 
 def utc_now_iso() -> str:
@@ -152,11 +161,24 @@ class AssignmentCreate(StrictModel):
     start_at: str | None = None
     due_at: str | None = None
     requirements: dict = Field(default_factory=dict)
-    score_weights: dict = Field(default_factory=lambda: {
-        "case_score": 70,
-        "flight_validation": 20,
-        "operation_norm": 10,
-    })
+    score_weights: dict = Field(default_factory=lambda: dict(DEFAULT_SCORE_WEIGHTS))
+
+    @field_validator("score_weights")
+    @classmethod
+    def validate_score_weights(cls, value: dict) -> dict:
+        normalized = dict(DEFAULT_SCORE_WEIGHTS)
+        for key in DEFAULT_SCORE_WEIGHTS:
+            if key in value:
+                try:
+                    number = float(value[key])
+                except (TypeError, ValueError) as error:
+                    raise ValueError(f"{key} 权重必须为数字") from error
+                if number < 0 or number > 100:
+                    raise ValueError(f"{key} 权重必须在 0-100 之间")
+                normalized[key] = number
+        if sum(normalized.values()) <= 0:
+            raise ValueError("成绩权重总和必须大于 0")
+        return normalized
 
     @field_validator("title", "scenario_id", "description")
     @classmethod
@@ -179,6 +201,9 @@ class AssignmentView(StrictModel):
     started_count: int
     completed_count: int
     average_score: float | None
+    requirements: dict
+    score_weights: dict
+    requires_flight_validation: bool
     created_at: str
 
 
@@ -195,8 +220,12 @@ class StudentAssignmentView(StrictModel):
     recommended_minutes: int
     due_at: str | None
     assignment_status: str
+    requirements: dict
+    score_weights: dict
+    requires_flight_validation: bool
     run_id: int | None
     run_status: str
+    run_stage: str
     score: float | None
     elapsed_seconds: int
 
@@ -226,6 +255,10 @@ class TrainingRunView(StrictModel):
     first_pass: bool | None
     prearm_passed: bool
     flight_validation_passed: bool
+    stage: str
+    case_score: float | None
+    operation_score: float | None
+    flight_score: float | None
     result: dict
 
 
@@ -301,6 +334,81 @@ class StudentSummary(StrictModel):
     first_pass_rate: float | None
 
 
+class GradebookAssignment(StrictModel):
+    id: int
+    title: str
+    scenario_id: str
+    scenario_title: str
+    requires_flight_validation: bool
+
+
+class GradebookCell(StrictModel):
+    assignment_id: int
+    run_id: int | None
+    status: str
+    stage: str
+    score: float | None
+    case_score: float | None
+    operation_score: float | None
+    flight_score: float | None
+    elapsed_seconds: int
+    hints_used: int
+    wrong_operations: int
+    first_pass: bool | None
+    prearm_passed: bool
+    flight_validation_passed: bool
+
+
+class GradebookStudent(StrictModel):
+    user_id: int
+    display_name: str
+    username: str
+    completed_count: int
+    average_score: float | None
+    cells: list[GradebookCell]
+
+
+class GradebookView(StrictModel):
+    class_id: int
+    class_name: str
+    assignment_count: int
+    student_count: int
+    completion_rate: float
+    class_average: float | None
+    assignments: list[GradebookAssignment]
+    students: list[GradebookStudent]
+
+
+class ScenarioAnalytics(StrictModel):
+    assignment_id: int
+    title: str
+    scenario_id: str
+    assigned_count: int
+    started_count: int
+    completed_count: int
+    completion_rate: float
+    average_score: float | None
+    first_pass_rate: float | None
+
+
+class ClassAnalytics(StrictModel):
+    class_id: int
+    class_name: str
+    student_count: int
+    assignment_count: int
+    total_expected_runs: int
+    started_run_count: int
+    completed_run_count: int
+    completion_rate: float
+    average_score: float | None
+    first_pass_rate: float | None
+    average_elapsed_seconds: float | None
+    average_hints: float | None
+    average_wrong_operations: float | None
+    flight_validation_rate: float | None
+    scenarios: list[ScenarioAnalytics]
+
+
 class AdminUserView(StrictModel):
     id: int
     username: str
@@ -312,6 +420,188 @@ class AdminUserView(StrictModel):
 
 class AdminRoleUpdate(StrictModel):
     role: Literal["student", "teacher"]
+
+
+def _assignment_requirements(record: AssignmentRecord) -> dict:
+    return record.requirements_json if isinstance(record.requirements_json, dict) else {}
+
+
+def _assignment_score_weights(record: AssignmentRecord) -> dict[str, float]:
+    raw = record.score_weights_json if isinstance(record.score_weights_json, dict) else {}
+    weights = dict(DEFAULT_SCORE_WEIGHTS)
+    for key in DEFAULT_SCORE_WEIGHTS:
+        try:
+            value = float(raw.get(key, weights[key]))
+        except (TypeError, ValueError):
+            value = weights[key]
+        weights[key] = max(0.0, value)
+    return weights
+
+
+def _requires_flight_validation(record: AssignmentRecord) -> bool:
+    return bool(_assignment_requirements(record).get("flight_validation", False))
+
+
+def _requires_prearm(record: AssignmentRecord) -> bool:
+    return bool(_assignment_requirements(record).get("prearm", False))
+
+
+def _operation_score(hints_used: int, wrong_operations: int) -> float:
+    # Operation norm is intentionally simple and interpretable for teachers.
+    # Fault-case scoring already contains its own detailed efficiency/penalty model;
+    # this separate component captures independence and clean operation behaviour.
+    value = 100.0 - max(0, hints_used) * 10.0 - max(0, wrong_operations) * 5.0
+    return round(max(0.0, min(100.0, value)), 1)
+
+
+def _grading_from_result(record: TrainingRunRecord) -> dict:
+    result = record.result_json if isinstance(record.result_json, dict) else {}
+    grading = result.get("grading")
+    return grading if isinstance(grading, dict) else {}
+
+
+def _run_case_score(record: TrainingRunRecord) -> float | None:
+    grading = _grading_from_result(record)
+    value = grading.get("case_score")
+    if isinstance(value, (int, float)):
+        return round(float(value), 1)
+    evaluation = (record.result_json or {}).get("evaluation") if isinstance(record.result_json, dict) else None
+    if isinstance(evaluation, dict) and isinstance(evaluation.get("score"), (int, float)):
+        return round(float(evaluation["score"]), 1)
+    # Backward compatibility for V1 completed records where run.score was the case score.
+    if record.status == "completed" and record.score is not None:
+        return round(float(record.score), 1)
+    return None
+
+
+def _run_operation_score(record: TrainingRunRecord) -> float | None:
+    grading = _grading_from_result(record)
+    value = grading.get("operation_score")
+    if isinstance(value, (int, float)):
+        return round(float(value), 1)
+    if record.score is None and record.elapsed_seconds == 0 and record.hints_used == 0 and record.wrong_operations == 0:
+        return None
+    return _operation_score(record.hints_used or 0, record.wrong_operations or 0)
+
+
+def _run_flight_score(record: TrainingRunRecord) -> float | None:
+    grading = _grading_from_result(record)
+    value = grading.get("flight_score")
+    if isinstance(value, (int, float)):
+        return round(float(value), 1)
+    if bool(record.flight_validation_passed):
+        return 100.0
+    return None
+
+
+def _run_stage(record: TrainingRunRecord, assignment: AssignmentRecord | None = None) -> str:
+    if record.status == "completed":
+        return "completed"
+    grading = _grading_from_result(record)
+    stage = grading.get("stage")
+    if isinstance(stage, str) and stage:
+        return stage
+    diagnosis_passed = bool(grading.get("diagnosis_passed", False))
+    if not diagnosis_passed:
+        return "diagnosis"
+    if assignment is not None and _requires_prearm(assignment) and not bool(record.prearm_passed):
+        return "awaiting_prearm"
+    if assignment is not None and _requires_flight_validation(assignment) and not bool(record.flight_validation_passed):
+        return "awaiting_flight"
+    return "diagnosis"
+
+
+def _compute_final_score(
+    assignment: AssignmentRecord,
+    *,
+    case_score: float,
+    operation_score: float,
+    flight_passed: bool,
+) -> tuple[float, float | None]:
+    weights = _assignment_score_weights(assignment)
+    weighted = case_score * weights["case_score"] + operation_score * weights["operation_norm"]
+    denominator = weights["case_score"] + weights["operation_norm"]
+    flight_score: float | None = None
+    if _requires_flight_validation(assignment):
+        flight_score = 100.0 if flight_passed else 0.0
+        weighted += flight_score * weights["flight_validation"]
+        denominator += weights["flight_validation"]
+    if denominator <= 0:
+        return round(case_score, 1), flight_score
+    return round(weighted / denominator, 1), flight_score
+
+
+def _merge_training_result(
+    run: TrainingRunRecord,
+    incoming: dict,
+    *,
+    assignment: AssignmentRecord,
+    diagnosis_passed: bool | None = None,
+    case_score: float | None = None,
+) -> dict:
+    previous = dict(run.result_json) if isinstance(run.result_json, dict) else {}
+    merged = dict(previous)
+    merged.update(incoming or {})
+    prior_grading = _grading_from_result(run)
+    if diagnosis_passed is None:
+        diagnosis_passed = bool(prior_grading.get("diagnosis_passed", False))
+    if case_score is None:
+        prior_case = prior_grading.get("case_score")
+        if isinstance(prior_case, (int, float)):
+            case_score = float(prior_case)
+        elif run.score is not None:
+            case_score = float(run.score)
+        else:
+            case_score = 0.0
+    operation = _operation_score(run.hints_used or 0, run.wrong_operations or 0)
+    if not diagnosis_passed:
+        stage = "diagnosis"
+    elif _requires_prearm(assignment) and not bool(run.prearm_passed):
+        stage = "awaiting_prearm"
+    elif _requires_flight_validation(assignment) and not bool(run.flight_validation_passed):
+        stage = "awaiting_flight"
+    else:
+        stage = "completed"
+    final_score, flight_score = _compute_final_score(
+        assignment,
+        case_score=max(0.0, min(100.0, float(case_score))),
+        operation_score=operation,
+        flight_passed=bool(run.flight_validation_passed),
+    )
+    merged["grading"] = {
+        "case_score": round(float(case_score), 1),
+        "operation_score": operation,
+        "flight_score": flight_score,
+        "final_score": final_score,
+        "diagnosis_passed": bool(diagnosis_passed),
+        "prearm_passed": bool(run.prearm_passed),
+        "flight_required": _requires_flight_validation(assignment),
+        "flight_validation_passed": bool(run.flight_validation_passed),
+        "stage": stage,
+    }
+    return merged
+
+
+def _apply_run_completion_state(run: TrainingRunRecord, assignment: AssignmentRecord) -> None:
+    grading = _grading_from_result(run)
+    diagnosis_passed = bool(grading.get("diagnosis_passed", False))
+    ready = diagnosis_passed
+    if _requires_prearm(assignment):
+        ready = ready and bool(run.prearm_passed)
+    if _requires_flight_validation(assignment):
+        ready = ready and bool(run.flight_validation_passed)
+    if ready:
+        run.status = "completed"
+        run.ended_at = run.ended_at or utc_now_iso()
+    elif diagnosis_passed and _requires_prearm(assignment) and not bool(run.prearm_passed):
+        run.status = "awaiting_prearm"
+        run.ended_at = None
+    elif diagnosis_passed and _requires_flight_validation(assignment) and not bool(run.flight_validation_passed):
+        run.status = "awaiting_flight"
+        run.ended_at = None
+    else:
+        run.status = "in_progress"
+        run.ended_at = None
 
 
 def _class_view(session: Session, classroom: ClassroomRecord) -> ClassroomView:
@@ -400,6 +690,9 @@ def _assignment_view(
         started_count=started_count,
         completed_count=completed_count,
         average_score=round(float(average_score), 1) if average_score is not None else None,
+        requirements=_assignment_requirements(record),
+        score_weights=_assignment_score_weights(record),
+        requires_flight_validation=_requires_flight_validation(record),
         created_at=record.created_at,
     )
 
@@ -435,6 +728,10 @@ def _run_view(
         first_pass=None if record.first_pass is None else bool(record.first_pass),
         prearm_passed=bool(record.prearm_passed),
         flight_validation_passed=bool(record.flight_validation_passed),
+        stage=_run_stage(record, assignment),
+        case_score=_run_case_score(record),
+        operation_score=_run_operation_score(record),
+        flight_score=_run_flight_score(record),
         result=record.result_json or {},
     )
 
@@ -487,6 +784,163 @@ def _append_event(
     )
     session.add(event)
     return event
+
+
+def _build_gradebook(
+    session: Session,
+    current_user: UserRecord,
+    class_id: int,
+) -> GradebookView:
+    classroom = _managed_class_or_404(session, current_user, class_id)
+    assignments = session.scalars(
+        select(AssignmentRecord)
+        .where(AssignmentRecord.class_id == class_id)
+        .order_by(AssignmentRecord.id)
+    ).all()
+    enrollments = session.scalars(
+        select(ClassEnrollmentRecord)
+        .where(ClassEnrollmentRecord.class_id == class_id)
+        .order_by(ClassEnrollmentRecord.id)
+    ).all()
+    cases = _training_case_map()
+    assignment_views = [
+        GradebookAssignment(
+            id=item.id,
+            title=item.title,
+            scenario_id=item.scenario_id,
+            scenario_title=cases[item.scenario_id].title if item.scenario_id in cases else item.scenario_id,
+            requires_flight_validation=_requires_flight_validation(item),
+        )
+        for item in assignments
+    ]
+    students: list[GradebookStudent] = []
+    completed_scores: list[float] = []
+    completed_cells = 0
+    for enrollment in enrollments:
+        student = session.get(UserRecord, enrollment.student_user_id)
+        if student is None:
+            continue
+        cells: list[GradebookCell] = []
+        row_scores: list[float] = []
+        row_completed = 0
+        for assignment in assignments:
+            run = session.scalar(
+                select(TrainingRunRecord).where(
+                    TrainingRunRecord.assignment_id == assignment.id,
+                    TrainingRunRecord.student_user_id == student.id,
+                )
+            )
+            if run is None:
+                cells.append(GradebookCell(
+                    assignment_id=assignment.id, run_id=None, status="not_started", stage="not_started",
+                    score=None, case_score=None, operation_score=None, flight_score=None,
+                    elapsed_seconds=0, hints_used=0, wrong_operations=0, first_pass=None,
+                    prearm_passed=False, flight_validation_passed=False,
+                ))
+                continue
+            score = round(float(run.score), 1) if run.score is not None else None
+            if run.status == "completed" and score is not None:
+                row_completed += 1
+                completed_cells += 1
+                row_scores.append(score)
+                completed_scores.append(score)
+            cells.append(GradebookCell(
+                assignment_id=assignment.id,
+                run_id=run.id,
+                status=run.status,
+                stage=_run_stage(run, assignment),
+                score=score,
+                case_score=_run_case_score(run),
+                operation_score=_run_operation_score(run),
+                flight_score=_run_flight_score(run),
+                elapsed_seconds=int(run.elapsed_seconds or 0),
+                hints_used=int(run.hints_used or 0),
+                wrong_operations=int(run.wrong_operations or 0),
+                first_pass=None if run.first_pass is None else bool(run.first_pass),
+                prearm_passed=bool(run.prearm_passed),
+                flight_validation_passed=bool(run.flight_validation_passed),
+            ))
+        students.append(GradebookStudent(
+            user_id=student.id,
+            display_name=student.display_name or student.username,
+            username=student.username,
+            completed_count=row_completed,
+            average_score=round(sum(row_scores) / len(row_scores), 1) if row_scores else None,
+            cells=cells,
+        ))
+    expected = len(assignments) * len(students)
+    return GradebookView(
+        class_id=classroom.id,
+        class_name=classroom.name,
+        assignment_count=len(assignments),
+        student_count=len(students),
+        completion_rate=round(100 * completed_cells / expected, 1) if expected else 0.0,
+        class_average=round(sum(completed_scores) / len(completed_scores), 1) if completed_scores else None,
+        assignments=assignment_views,
+        students=students,
+    )
+
+
+def _build_class_analytics(
+    session: Session,
+    current_user: UserRecord,
+    class_id: int,
+) -> ClassAnalytics:
+    classroom = _managed_class_or_404(session, current_user, class_id)
+    assignments = session.scalars(
+        select(AssignmentRecord).where(AssignmentRecord.class_id == class_id).order_by(AssignmentRecord.id)
+    ).all()
+    student_count = int(session.scalar(
+        select(func.count(ClassEnrollmentRecord.id)).where(ClassEnrollmentRecord.class_id == class_id)
+    ) or 0)
+    assignment_ids = [item.id for item in assignments]
+    runs = session.scalars(
+        select(TrainingRunRecord).where(TrainingRunRecord.assignment_id.in_(assignment_ids))
+    ).all() if assignment_ids else []
+    completed = [item for item in runs if item.status == "completed"]
+    completed_scores = [float(item.score) for item in completed if item.score is not None]
+    first_pass = [bool(item.first_pass) for item in completed if item.first_pass is not None]
+    elapsed = [float(item.elapsed_seconds or 0) for item in completed]
+    required_flight_assignment_ids = {item.id for item in assignments if _requires_flight_validation(item)}
+    required_flight_runs = [item for item in runs if item.assignment_id in required_flight_assignment_ids]
+    scenario_stats: list[ScenarioAnalytics] = []
+    for assignment in assignments:
+        assignment_runs = [item for item in runs if item.assignment_id == assignment.id]
+        assignment_completed = [item for item in assignment_runs if item.status == "completed"]
+        scores = [float(item.score) for item in assignment_completed if item.score is not None]
+        passes = [bool(item.first_pass) for item in assignment_completed if item.first_pass is not None]
+        scenario_stats.append(ScenarioAnalytics(
+            assignment_id=assignment.id,
+            title=assignment.title,
+            scenario_id=assignment.scenario_id,
+            assigned_count=student_count,
+            started_count=len(assignment_runs),
+            completed_count=len(assignment_completed),
+            completion_rate=round(100 * len(assignment_completed) / student_count, 1) if student_count else 0.0,
+            average_score=round(sum(scores) / len(scores), 1) if scores else None,
+            first_pass_rate=round(100 * sum(passes) / len(passes), 1) if passes else None,
+        ))
+    expected = student_count * len(assignments)
+    return ClassAnalytics(
+        class_id=classroom.id,
+        class_name=classroom.name,
+        student_count=student_count,
+        assignment_count=len(assignments),
+        total_expected_runs=expected,
+        started_run_count=len(runs),
+        completed_run_count=len(completed),
+        completion_rate=round(100 * len(completed) / expected, 1) if expected else 0.0,
+        average_score=round(sum(completed_scores) / len(completed_scores), 1) if completed_scores else None,
+        first_pass_rate=round(100 * sum(first_pass) / len(first_pass), 1) if first_pass else None,
+        average_elapsed_seconds=round(sum(elapsed) / len(elapsed), 1) if elapsed else None,
+        average_hints=round(sum(int(item.hints_used or 0) for item in completed) / len(completed), 2) if completed else None,
+        average_wrong_operations=round(sum(int(item.wrong_operations or 0) for item in completed) / len(completed), 2) if completed else None,
+        flight_validation_rate=(
+            round(100 * sum(bool(item.flight_validation_passed) for item in required_flight_runs) / len(required_flight_runs), 1)
+            if required_flight_runs else None
+        ),
+        scenarios=scenario_stats,
+    )
 
 
 def register_teacher_workbench_routes(
@@ -740,6 +1194,51 @@ def register_teacher_workbench_routes(
                 ))
         return result
 
+    @app.get("/api/teacher/gradebook", response_model=GradebookView)
+    def teacher_gradebook(
+        class_id: int = Query(..., ge=1),
+        session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
+    ) -> GradebookView:
+        _require_teacher(current_user)
+        return _build_gradebook(session, current_user, class_id)
+
+    @app.get("/api/teacher/analytics", response_model=ClassAnalytics)
+    def teacher_class_analytics(
+        class_id: int = Query(..., ge=1),
+        session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
+    ) -> ClassAnalytics:
+        _require_teacher(current_user)
+        return _build_class_analytics(session, current_user, class_id)
+
+    @app.get("/api/teacher/gradebook/export.csv")
+    def export_teacher_gradebook_csv(
+        class_id: int = Query(..., ge=1),
+        session: Session = Depends(get_db),
+        current_user: UserRecord = Depends(get_current_user),
+    ) -> Response:
+        _require_teacher(current_user)
+        gradebook = _build_gradebook(session, current_user, class_id)
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        header = ["学生", "用户名"] + [item.title for item in gradebook.assignments] + ["已完成任务", "课程平均分"]
+        writer.writerow(header)
+        for row in gradebook.students:
+            writer.writerow([
+                row.display_name, row.username,
+                *[("" if cell.score is None else f"{cell.score:.1f}") for cell in row.cells],
+                f"{row.completed_count}/{gradebook.assignment_count}",
+                "" if row.average_score is None else f"{row.average_score:.1f}",
+            ])
+        content = "\ufeff" + buffer.getvalue()
+        filename = f"uav-studio-gradebook-class-{class_id}.csv"
+        return Response(
+            content=content,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     @app.post("/api/training/classes/join", response_model=EnrollmentView)
     def join_classroom(
         command: JoinClassRequest,
@@ -851,8 +1350,12 @@ def register_teacher_workbench_routes(
                 recommended_minutes=training_case.recommended_minutes if training_case else 20,
                 due_at=assignment.due_at,
                 assignment_status=assignment.status,
+                requirements=_assignment_requirements(assignment),
+                score_weights=_assignment_score_weights(assignment),
+                requires_flight_validation=_requires_flight_validation(assignment),
                 run_id=run.id if run else None,
                 run_status=run.status if run else "not_started",
+                run_stage=_run_stage(run, assignment) if run else "not_started",
                 score=round(float(run.score), 1) if run and run.score is not None else None,
                 elapsed_seconds=int(run.elapsed_seconds or 0) if run else 0,
             ))
@@ -975,6 +1478,9 @@ def register_teacher_workbench_routes(
         run = _run_access_or_404(session, current_user, run_id)
         if run.student_user_id != current_user.id:
             raise HTTPException(status_code=403, detail="只有学生本人可更新实训进度")
+        if run.status == "completed":
+            return _run_view(session, run)
+        assignment = _assignment_or_404(session, run.assignment_id)
         previous_result = run.result_json if isinstance(run.result_json, dict) else {}
         previous_sections = set(previous_result.get("visited_sections") or [])
         next_sections = list(command.result.get("visited_sections") or [])
@@ -988,13 +1494,13 @@ def register_teacher_workbench_routes(
                     detail=str(section),
                     payload={"section": section},
                 )
-        previous_hints = int(previous_result.get("hints_used") or 0)
+        previous_hints = int(run.hints_used or 0)
+        previous_wrong = int(run.wrong_operations or 0)
         if command.hints_used > previous_hints:
             _append_event(
                 session, run, event_type="hint", title="使用案例提示",
                 detail=f"累计使用 {command.hints_used} 次提示", payload={"hints_used": command.hints_used},
             )
-        previous_wrong = int(previous_result.get("wrong_operations") or 0)
         if command.wrong_operations > previous_wrong:
             _append_event(
                 session, run, event_type="wrong_operation", title="记录错误操作",
@@ -1008,12 +1514,28 @@ def register_teacher_workbench_routes(
                     session, run, event_type="condition_passed", title="完成验证条件",
                     detail=str(key), payload={"condition": key},
                 )
-        run.score = float(command.score)
         run.elapsed_seconds = command.elapsed_seconds
         run.hints_used = command.hints_used
         run.wrong_operations = command.wrong_operations
         run.prearm_passed = 1 if command.prearm_passed else 0
-        run.result_json = command.result
+        prior_diagnosis_passed = bool(_grading_from_result(run).get("diagnosis_passed", False))
+        run.result_json = _merge_training_result(
+            run, command.result, assignment=assignment,
+            diagnosis_passed=prior_diagnosis_passed, case_score=float(command.score),
+        )
+        if prior_diagnosis_passed:
+            # A diagnosis may already have been submitted while Pre-Arm was still
+            # blocked. Subsequent progress updates can advance that gate without
+            # asking the learner to submit the same diagnosis again.
+            _apply_run_completion_state(run, assignment)
+            run.result_json = _merge_training_result(
+                run, run.result_json or {}, assignment=assignment,
+                diagnosis_passed=True, case_score=float(command.score),
+            )
+            run.score = float(_grading_from_result(run).get("final_score", command.score))
+        else:
+            # Before a diagnosis is accepted, the live score remains the case score.
+            run.score = float(command.score)
         session.commit()
         session.refresh(run)
         return _run_view(session, run)
@@ -1028,6 +1550,9 @@ def register_teacher_workbench_routes(
         run = _run_access_or_404(session, current_user, run_id)
         if run.student_user_id != current_user.id:
             raise HTTPException(status_code=403, detail="只有学生本人可提交实训")
+        if run.status == "completed":
+            return _run_view(session, run)
+        assignment = _assignment_or_404(session, run.assignment_id)
         previous_submissions = int(
             session.scalar(
                 select(func.count(TrainingEventRecord.id)).where(
@@ -1037,35 +1562,49 @@ def register_teacher_workbench_routes(
             )
             or 0
         )
-        run.score = float(command.score)
         run.elapsed_seconds = command.elapsed_seconds
         run.hints_used = command.hints_used
         run.wrong_operations = command.wrong_operations
         run.prearm_passed = 1 if command.prearm_passed else 0
-        run.flight_validation_passed = 1 if command.flight_validation_passed else 0
-        run.result_json = command.result
-        if command.passed:
-            run.status = "completed"
-            run.ended_at = utc_now_iso()
+        # Diagnosis submission does not manufacture a flight-validation pass.
+        if command.flight_validation_passed and bool(run.flight_validation_passed):
+            run.flight_validation_passed = 1
+        run.result_json = _merge_training_result(
+            run, command.result, assignment=assignment,
+            diagnosis_passed=command.passed, case_score=float(command.score),
+        )
+        grading = _grading_from_result(run)
+        run.score = float(grading.get("final_score", command.score))
+        if command.passed and run.first_pass is None:
             run.first_pass = 1 if previous_submissions == 0 else 0
-        else:
-            run.status = "in_progress"
-            run.ended_at = None
-            if run.first_pass is None:
-                run.first_pass = 0
+        elif not command.passed and run.first_pass is None:
+            run.first_pass = 0
+        _apply_run_completion_state(run, assignment)
+        # Rebuild grading once completion gates have been applied.
+        run.result_json = _merge_training_result(
+            run, run.result_json or {}, assignment=assignment,
+            diagnosis_passed=command.passed, case_score=float(command.score),
+        )
+        run.score = float(_grading_from_result(run).get("final_score", command.score))
         _append_event(
             session,
             run,
             event_type="submission",
             title="提交诊断结果" if command.passed else "提交未通过",
-            detail=f"得分 {command.score:.0f}/100",
+            detail=(
+                f"案例得分 {command.score:.0f}/100；等待飞行验证"
+                if command.passed and run.status == "awaiting_flight"
+                else f"案例得分 {command.score:.0f}/100"
+            ),
             payload={
                 "passed": command.passed,
-                "score": command.score,
+                "case_score": command.score,
+                "final_score": run.score,
                 "elapsed_seconds": command.elapsed_seconds,
                 "hints_used": command.hints_used,
                 "wrong_operations": command.wrong_operations,
                 "prearm_passed": command.prearm_passed,
+                "stage": _run_stage(run, assignment),
             },
         )
         session.commit()
@@ -1082,15 +1621,43 @@ def register_teacher_workbench_routes(
         run = _run_access_or_404(session, current_user, run_id)
         if run.student_user_id != current_user.id:
             raise HTTPException(status_code=403, detail="只有学生本人可更新飞行验证")
+        if run.status == "completed" and bool(run.flight_validation_passed):
+            return _run_view(session, run)
+        assignment = _assignment_or_404(session, run.assignment_id)
+        grading = _grading_from_result(run)
+        if command.passed and not bool(grading.get("diagnosis_passed", False)):
+            raise HTTPException(status_code=409, detail="请先完成故障诊断并提交通过结果")
+        if command.passed and _requires_prearm(assignment) and not bool(run.prearm_passed):
+            raise HTTPException(status_code=409, detail="请先通过 Pre-Arm 检查")
+        previous = bool(run.flight_validation_passed)
         run.flight_validation_passed = 1 if command.passed else 0
-        _append_event(
-            session,
-            run,
-            event_type="flight_validation",
-            title="飞行验证通过" if command.passed else "飞行验证未通过",
-            detail=command.detail,
-            payload={"passed": command.passed},
+        case_score = _run_case_score(run) or 0.0
+        run.result_json = _merge_training_result(
+            run, run.result_json or {}, assignment=assignment,
+            diagnosis_passed=bool(grading.get("diagnosis_passed", False)),
+            case_score=case_score,
         )
+        run.score = float(_grading_from_result(run).get("final_score", case_score))
+        _apply_run_completion_state(run, assignment)
+        run.result_json = _merge_training_result(
+            run, run.result_json or {}, assignment=assignment,
+            diagnosis_passed=bool(_grading_from_result(run).get("diagnosis_passed", False)),
+            case_score=case_score,
+        )
+        run.score = float(_grading_from_result(run).get("final_score", case_score))
+        if previous != command.passed or not command.passed:
+            _append_event(
+                session,
+                run,
+                event_type="flight_validation",
+                title="飞行验证通过" if command.passed else "飞行验证未通过",
+                detail=command.detail,
+                payload={
+                    "passed": command.passed,
+                    "final_score": run.score,
+                    "stage": _run_stage(run, assignment),
+                },
+            )
         session.commit()
         session.refresh(run)
         return _run_view(session, run)

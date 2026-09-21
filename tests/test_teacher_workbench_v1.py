@@ -84,6 +84,7 @@ def test_teacher_assignment_training_run_and_events_roundtrip():
             "scenario_id": "F04_MOTOR_MAPPING",
             "description": "定位、修复并复测。",
             "requirements": {"prearm": True},
+            "score_weights": {"case_score": 100, "flight_validation": 0, "operation_norm": 0},
         },
     )
     assert created_assignment.status_code == 201

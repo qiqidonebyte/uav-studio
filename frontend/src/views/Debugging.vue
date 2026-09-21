@@ -85,6 +85,7 @@
           <button @click="restartTrainingCase">重新开始</button>
           <button class="training-exit" @click="enterFreeDebug">退出案例</button>
         </div>
+        <div v-if="trainingRemoteStatus" class="training-hint"><b>课程记录</b><span>{{ trainingRemoteStatus }}</span></div>
         <div v-if="trainingCurrentHint" class="training-hint"><b>提示</b><span>{{ trainingCurrentHint }}</span></div>
         <div v-if="trainingSubmittedEvaluation" :class="['training-result', { passed: trainingSubmittedEvaluation.passed }]">
           <div>
@@ -760,7 +761,7 @@
             </div>
             <div class="preflight-final-actions">
               <button :disabled="preflightBusy" @click="runFinalPreflight">{{ preflightBusy ? '检查中…' : '执行最终起飞检查' }}</button>
-              <RouterLink v-if="preflightPermitValid" class="preflight-flight-button" to="/flight">进入飞行验证</RouterLink>
+              <RouterLink v-if="preflightPermitValid" class="preflight-flight-button" :to="flightRoute">进入飞行验证</RouterLink>
               <button v-else class="preflight-flight-button disabled" disabled>进入飞行验证</button>
             </div>
           </section>
@@ -843,7 +844,7 @@
 
       <div class="right-actions">
         <button @click="saveDebugReport">▣ 保存调试记录</button>
-        <RouterLink v-if="preflightPermitValid" class="flight-action" to="/flight">➤ 进入飞行验证</RouterLink>
+        <RouterLink v-if="preflightPermitValid" class="flight-action" :to="flightRoute">➤ 进入飞行验证</RouterLink>
         <button v-else class="flight-action disabled" disabled title="请先完成起飞前检查">➤ 进入飞行验证</button>
       </div>
     </aside>
@@ -891,8 +892,10 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import DebugMotorScene from '../components/DebugMotorScene.vue'
 import { px4Api, type Px4SensorKey, type Px4Telemetry } from '../api/px4'
+import { studentTrainingApi } from '../api/teacher'
 import { useAssemblyStore } from '../stores/assembly'
 import type { MotorName } from '../types/aircraft'
 import type { MotorVector, TelemetryFrame } from '../types/telemetry'
@@ -918,6 +921,7 @@ interface DebugLog {
 }
 
 const assemblyStore = useAssemblyStore()
+const route = useRoute()
 const activeSection = ref<SectionKey>('power')
 const scenario = ref<ScenarioKey>('standard')
 const bridgeMode = ref<'demo' | 'live'>('demo')
@@ -994,7 +998,10 @@ const trainingHintsUsed = ref(0)
 const trainingWrongOperations = ref(0)
 const trainingCurrentHint = ref('')
 const trainingSubmittedEvaluation = ref<TrainingEvaluation | null>(null)
+const trainingRemoteStatus = ref('')
 let trainingInternalMutation = false
+let trainingSyncTimer: number | undefined
+let trainingSyncBusy = false
 
 const trainingCategoryOptions: Array<{ key: 'all' | TrainingCategory; label: string }> = [
   { key: 'all', label: '全部' },
@@ -1004,6 +1011,31 @@ const trainingCategoryOptions: Array<{ key: 'all' | TrainingCategory; label: str
   { key: 'safety', label: '安全' },
   { key: 'integrated', label: '综合' },
 ]
+
+const assignedRunId = computed(() => {
+  const raw = Array.isArray(route.query.run) ? route.query.run[0] : route.query.run
+  const value = Number(raw)
+  return Number.isInteger(value) && value > 0 ? value : null
+})
+const assignedScenarioId = computed(() => {
+  const raw = Array.isArray(route.query.scenario) ? route.query.scenario[0] : route.query.scenario
+  return typeof raw === 'string' ? raw : ''
+})
+const assignedAssignmentId = computed(() => {
+  const raw = Array.isArray(route.query.assignment) ? route.query.assignment[0] : route.query.assignment
+  const value = Number(raw)
+  return Number.isInteger(value) && value > 0 ? value : null
+})
+const flightRoute = computed(() => assignedRunId.value
+  ? {
+      path: '/flight',
+      query: {
+        run: String(assignedRunId.value),
+        scenario: assignedScenarioId.value || activeTrainingCase.value?.id || '',
+        ...(assignedAssignmentId.value ? { assignment: String(assignedAssignmentId.value) } : {}),
+      },
+    }
+  : '/flight')
 
 const motorNames: MotorName[] = ['M1', 'M2', 'M3', 'M4']
 const motorIndex: Record<MotorName, number> = { M1: 0, M2: 1, M3: 2, M4: 3 }
@@ -1641,6 +1673,10 @@ function applyTrainingCaseInjections(trainingCase: FaultTrainingCase): void {
 }
 
 function startTrainingCase(trainingCase: FaultTrainingCase): void {
+  if (assignedScenarioId.value && assignedScenarioId.value !== trainingCase.id) {
+    trainingCatalogError.value = `当前教师任务指定案例 ${assignedScenarioId.value}，不能切换到 ${trainingCase.id}。`
+    return
+  }
   trainingInternalMutation = true
   activeTrainingCase.value = trainingCase
   trainingLibraryOpen.value = false
@@ -1651,6 +1687,7 @@ function startTrainingCase(trainingCase: FaultTrainingCase): void {
   trainingWrongOperations.value = 0
   trainingCurrentHint.value = ''
   trainingSubmittedEvaluation.value = null
+  trainingRemoteStatus.value = assignedRunId.value ? '正在记录课程实训过程' : ''
 
   // Avoid a watcher loading normal parameters between scenario reset and injection.
   activeSection.value = 'power'
@@ -1672,6 +1709,10 @@ function restartTrainingCase(): void {
 }
 
 function enterFreeDebug(): void {
+  if (assignedRunId.value) {
+    appendLog('课程实训已锁定案例', '请完成教师发布的案例后再返回自由调试。', 'warn')
+    return
+  }
   trainingInternalMutation = true
   activeTrainingCase.value = null
   trainingStartedAt.value = null
@@ -1709,16 +1750,71 @@ function requestTrainingHint(): void {
   appendLog('使用案例提示', `已使用第 ${trainingHintsUsed.value} 条提示；本次评分将扣除提示分。`, 'warn')
 }
 
-function submitTrainingCase(): void {
+async function submitTrainingCase(): Promise<void> {
   if (!activeTrainingCase.value) return
   const evaluation = trainingEvaluationPreview.value
   if (!evaluation) return
   trainingSubmittedEvaluation.value = { ...evaluation }
   if (evaluation.passed) {
     trainingFinishedAt.value = Date.now()
-    appendLog('实训案例完成', `${activeTrainingCase.value.id} · 最终得分 ${evaluation.score}/100`, 'success')
+    appendLog('实训案例完成', `${activeTrainingCase.value.id} · 案例得分 ${evaluation.score}/100`, 'success')
   } else {
     appendLog('案例提交未通过', `当前完成 ${evaluation.completedConditions}/${evaluation.totalConditions} 个成功条件，可继续诊断后再次提交。`, 'warn')
+  }
+
+  if (!assignedRunId.value) return
+  try {
+    const run = await studentTrainingApi.submitRun(assignedRunId.value, trainingPayload(evaluation.passed))
+    trainingRemoteStatus.value = run.stage === 'awaiting_flight'
+      ? `诊断已提交 · 当前课程成绩 ${run.score ?? '—'} · 等待飞行验证`
+      : run.status === 'completed'
+        ? `课程实训已完成 · 最终成绩 ${run.score ?? '—'}`
+        : `诊断已同步 · 当前阶段 ${run.stage}`
+    if (run.stage === 'awaiting_flight') {
+      appendLog('进入下一阶段', 'Pre-Arm 已通过，请进入 PX4 飞行验证完成课程任务。', 'success')
+    }
+  } catch (error) {
+    trainingRemoteStatus.value = `课程实训同步失败：${errorText(error)}`
+  }
+}
+
+function trainingPayload(passed = false) {
+  const evaluation = trainingEvaluationPreview.value
+  return {
+    passed,
+    score: evaluation?.score ?? 0,
+    elapsed_seconds: trainingElapsedSeconds.value,
+    hints_used: trainingHintsUsed.value,
+    wrong_operations: trainingWrongOperations.value,
+    prearm_passed: preflightPermitValid.value,
+    flight_validation_passed: false,
+    result: {
+      case_id: activeTrainingCase.value?.id ?? assignedScenarioId.value,
+      case_title: activeTrainingCase.value?.title ?? '',
+      bridge_mode: bridgeMode.value,
+      visited_sections: [...trainingVisitedSections.value],
+      condition_state: { ...trainingConditionState.value },
+      evaluation,
+    },
+  }
+}
+
+function scheduleTrainingProgressSync(delay = 450): void {
+  if (!assignedRunId.value || !activeTrainingCase.value || trainingInternalMutation) return
+  if (trainingSyncTimer) window.clearTimeout(trainingSyncTimer)
+  trainingSyncTimer = window.setTimeout(() => { void syncTrainingProgress() }, delay)
+}
+
+async function syncTrainingProgress(): Promise<void> {
+  if (!assignedRunId.value || !activeTrainingCase.value || trainingSyncBusy) return
+  trainingSyncBusy = true
+  try {
+    const run = await studentTrainingApi.progressRun(assignedRunId.value, trainingPayload(false))
+    trainingRemoteStatus.value = `课程实训记录中 · ${run.stage}`
+  } catch (error) {
+    trainingRemoteStatus.value = `过程记录暂未同步：${errorText(error)}`
+  } finally {
+    trainingSyncBusy = false
   }
 }
 
@@ -2608,12 +2704,17 @@ function saveDebugReport(): void {
 watch(activeSection, next => {
   if (activeTrainingCase.value && !trainingVisitedSections.value.includes(next)) {
     trainingVisitedSections.value = [...trainingVisitedSections.value, next]
+    scheduleTrainingProgressSync()
   }
   if (next === 'safety' && !safetyLoadedOnce.value) void loadSafetyParameters()
   if (next === 'rc' && !rcLoadedOnce.value) void loadRcParameters()
 })
 
 watch(currentRcChannels, values => updateRcCapture(values), { deep: true })
+
+watch([trainingHintsUsed, trainingWrongOperations], () => scheduleTrainingProgressSync())
+watch(trainingConditionState, () => scheduleTrainingProgressSync(), { deep: true })
+watch(preflightPermitValid, () => scheduleTrainingProgressSync())
 
 watch(rcDirtyCount, count => {
   if (count > 0) { rcVerificationPassed.value = false; invalidatePreflightPermit() }
@@ -2653,6 +2754,11 @@ onMounted(async () => {
   try {
     trainingCases.value = await loadFaultTrainingCases()
     trainingCatalogError.value = ''
+    if (assignedScenarioId.value) {
+      const assignedCase = trainingCases.value.find(item => item.id === assignedScenarioId.value)
+      if (assignedCase) startTrainingCase(assignedCase)
+      else trainingCatalogError.value = `教师任务指定的案例 ${assignedScenarioId.value} 不在当前案例库中。`
+    }
   } catch (error) {
     trainingCatalogError.value = errorText(error)
   }
@@ -2671,6 +2777,7 @@ onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer)
   if (px4PollTimer) window.clearInterval(px4PollTimer)
   if (stopTimer) window.clearTimeout(stopTimer)
+  if (trainingSyncTimer) window.clearTimeout(trainingSyncTimer)
 })
 </script>
 

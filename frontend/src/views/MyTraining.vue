@@ -32,8 +32,8 @@
             <div class="case-line"><span>案例</span><b>{{ item.scenario_title }}</b><em>{{ stars(item.difficulty) }}</em></div>
             <div class="task-meta"><div><span>建议时间</span><b>{{ item.recommended_minutes }} min</b></div><div><span>截止</span><b>{{ dueText(item.due_at) }}</b></div></div>
             <div v-if="item.run_status === 'completed'" class="completed-result"><span>已完成</span><b>{{ scoreText(item.score) }}<em>/100</em></b><small>用时 {{ durationText(item.elapsed_seconds) }}</small></div>
-            <div v-else-if="item.run_status === 'in_progress'" class="progress-state"><i></i><span>实训进行中 · 已记录 {{ durationText(item.elapsed_seconds) }}</span></div>
-            <button :disabled="startingId === item.id" @click="startAssignment(item)">{{ startingId === item.id ? '正在进入…' : item.run_status === 'completed' ? '查看 / 复盘案例' : item.run_status === 'in_progress' ? '继续实训' : '开始实训' }}</button>
+            <div v-else-if="item.run_status !== 'not_started'" class="progress-state"><i></i><span>{{ trainingStatusText(item.run_stage || item.run_status) }} · 已记录 {{ durationText(item.elapsed_seconds) }}</span></div>
+            <button :disabled="startingId === item.id || item.run_status === 'completed'" @click="startAssignment(item)">{{ startingId === item.id ? '正在进入…' : taskActionText(item) }}</button>
           </article>
         </div>
       </section>
@@ -50,6 +50,7 @@ import axios from 'axios'
 import { studentTrainingApi } from '../api/teacher'
 import { useAssemblyStore } from '../stores/assembly'
 import type { EnrollmentView, StudentAssignmentView } from '../types/teacher'
+import { buildStudentTrainingRoute, trainingStatusText } from '../utils/trainingFlow'
 
 const router = useRouter()
 const assembly = useAssemblyStore()
@@ -83,11 +84,20 @@ async function startAssignment(item: StudentAssignmentView): Promise<void> {
   startingId.value = item.id
   try {
     const run = await studentTrainingApi.startAssignment(item.id, assembly.activeAircraftId)
-    await router.push({ path: '/debugging', query: { run: String(run.id), scenario: run.scenario_id, assignment: String(item.id) } })
+    await router.push(buildStudentTrainingRoute({
+      runId: run.id, assignmentId: item.id, scenarioId: run.scenario_id, status: run.stage || run.status,
+    }))
   } catch (caught) { showNotice(apiError(caught)) }
   finally { startingId.value = null }
 }
 
+
+function taskActionText(item: StudentAssignmentView): string {
+  if (item.run_status === 'completed') return '已完成 · 成绩已锁定'
+  if (item.run_stage === 'awaiting_flight' || item.run_status === 'awaiting_flight') return '进入飞行验证'
+  if (item.run_status !== 'not_started') return '继续实训'
+  return '开始实训'
+}
 function stars(value: number): string { return '★'.repeat(Math.max(1, Math.min(3, value))) }
 function scoreText(value: number | null): string { return value === null ? '—' : value.toFixed(0) }
 function durationText(value: number): string { const m = Math.floor(Math.max(0, value) / 60); const s = Math.max(0, value) % 60; return `${m}:${String(s).padStart(2, '0')}` }
