@@ -1,5 +1,6 @@
 services:
   backend:
+    image: uav-studio-backend
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -16,7 +17,24 @@ services:
       timeout: 5s
       retries: 6
 
+  px4-bridge:
+    image: uav-studio-backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      PX4_CONNECTION: udpin:0.0.0.0:14540
+      PX4_BRIDGE_HOST: 0.0.0.0
+      PX4_BRIDGE_PORT: 8001
+    command: ["python", "-m", "backend.px4_service"]
+
   frontend:
+    image: uav-studio-frontend
     build:
       context: ./frontend
     restart: unless-stopped
