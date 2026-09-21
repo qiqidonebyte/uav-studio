@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.models import UserRecord
+from backend.teacher_workbench import register_teacher_workbench_routes
 
 PBKDF2_ITERATIONS = 210_000
 DEFAULT_USERNAME = "admin"
@@ -269,3 +270,7 @@ def register_user_settings_routes(
         record: UserRecord = Depends(get_current_user),
     ) -> UserSettings:
         return write_settings(session, record, settings)
+
+
+    # Teacher Workbench V1: roles, classes, assignments and persistent training records.
+    register_teacher_workbench_routes(app, get_db, get_current_user)

@@ -38,14 +38,7 @@ class FaultTrainingCase(StrictModel):
     hints: list[str] = Field(min_length=1, max_length=4)
 
 
-DEFAULT_CATALOG = (
-    Path(__file__).resolve().parents[2]
-    / "frontend"
-    / "public"
-    / "training"
-    / "scenarios"
-    / "index.json"
-)
+DEFAULT_CATALOG = Path(__file__).resolve().parents[2] / "frontend" / "public" / "training" / "scenarios" / "index.json"
 
 
 def load_training_cases(path: Path | None = None) -> list[FaultTrainingCase]:

@@ -14,9 +14,11 @@
       <nav>
         <RouterLink to="/assembly">无人机装配</RouterLink>
         <RouterLink to="/debugging">系统调试</RouterLink>
+        <RouterLink v-if="authStore.user?.role === 'student'" to="/training">我的实训</RouterLink>
         <RouterLink to="/flight">飞行实验</RouterLink>
         <RouterLink to="/history">实验记录</RouterLink>
         <RouterLink to="/components">组件库</RouterLink>
+        <RouterLink v-if="isTeacherRole" to="/teacher">教师工作台</RouterLink>
         <RouterLink to="/settings">系统设置</RouterLink>
       </nav>
 
@@ -71,6 +73,8 @@ const roleLabel = computed(() => {
   if (authStore.user?.role === 'teacher') return '教师'
   return '学生'
 })
+
+const isTeacherRole = computed(() => ['teacher', 'admin'].includes(String(authStore.user?.role ?? 'student')))
 
 const saveTitle = computed(() => {
   if (assemblyStore.saveStatus === 'saving') return '设计正在自动保存到本地 SQLite'
