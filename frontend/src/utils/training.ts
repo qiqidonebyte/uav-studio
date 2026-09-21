@@ -48,10 +48,8 @@ export interface TrainingEvaluation {
 }
 
 interface AssignedTrainingSnapshot { input: TrainingScoreInput; evaluation: TrainingEvaluation }
-let latestAssignedSnapshot: AssignedTrainingSnapshot | null = null
 let progressTimer: number | undefined
 let lastProgressKey = ''
-let submitBridgeInstalled = false
 
 function assignedQuery(): { runId: number | null; scenarioId: string } {
   if (typeof window === 'undefined') return { runId: null, scenarioId: '' }
@@ -100,7 +98,6 @@ function queueAssignedProgress(snapshot: AssignedTrainingSnapshot): void {
   if (typeof window === 'undefined') return
   const { runId, scenarioId } = assignedQuery()
   if (!runId || (scenarioId && scenarioId !== snapshot.input.trainingCase.id)) return
-  latestAssignedSnapshot = snapshot
   const key = JSON.stringify({
     runId,
     caseId: snapshot.input.trainingCase.id,
@@ -119,25 +116,7 @@ function queueAssignedProgress(snapshot: AssignedTrainingSnapshot): void {
   }, 350)
 }
 
-function installSubmitBridge(): void {
-  if (submitBridgeInstalled || typeof document === 'undefined') return
-  submitBridgeInstalled = true
-  document.addEventListener('click', event => {
-    const target = event.target
-    if (!(target instanceof Element) || !target.closest('.training-submit')) return
-    const snapshot = latestAssignedSnapshot
-    if (!snapshot) return
-    const { runId, scenarioId } = assignedQuery()
-    if (!runId || (scenarioId && scenarioId !== snapshot.input.trainingCase.id)) return
-    window.setTimeout(() => {
-      const current = latestAssignedSnapshot ?? snapshot
-      void postAssignedRun(`/training/runs/${runId}/submit`, assignedPayload(current))
-    }, 0)
-  })
-}
-
 export async function loadFaultTrainingCases(): Promise<FaultTrainingCase[]> {
-  installSubmitBridge()
   const base = String(import.meta.env.BASE_URL || '/').replace(/\/?$/, '/')
   const response = await fetch(`${base}training/scenarios/index.json`, { cache: 'no-store' })
   if (!response.ok) throw new Error(`案例库加载失败：HTTP ${response.status}`)

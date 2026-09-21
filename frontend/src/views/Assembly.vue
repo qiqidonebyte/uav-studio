@@ -332,11 +332,11 @@
         <RouterLink
           v-if="store.validation.passed"
           class="launch-link"
-          to="/flight"
+          to="/debugging"
         >
-          进入飞行实验
+          进入系统调试
         </RouterLink>
-        <span v-else class="launch-link disabled">装配检查通过后可进入飞行实验</span>
+        <span v-else class="launch-link disabled">装配检查通过后可进入系统调试</span>
       </section>
     </aside>
 

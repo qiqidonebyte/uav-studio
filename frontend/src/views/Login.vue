@@ -82,10 +82,10 @@ async function submit(): Promise<void> {
   if (!form.username || !form.password || auth.loading) return
   message.value = ''
   try {
-    await auth.login({ username: form.username, password: form.password })
+    const user = await auth.login({ username: form.username, password: form.password })
     const redirect = typeof route.query.redirect === 'string'
       ? route.query.redirect
-      : '/aircraft'
+      : user.role === 'student' ? '/training' : '/teacher'
     await router.replace(redirect)
   } catch {
     message.value = auth.error || '登录失败。'

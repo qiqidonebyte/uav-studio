@@ -9,6 +9,7 @@ import ComponentLibrary from '../views/ComponentLibrary.vue'
 import Settings from '../views/Settings.vue'
 import TeacherWorkbench from '../views/TeacherWorkbench.vue'
 import MyTraining from '../views/MyTraining.vue'
+import LearningReview from '../views/LearningReview.vue'
 import Login from '../views/Login.vue'
 import Register from '../views/Register.vue'
 import { useAuthStore } from '../stores/auth'
@@ -18,12 +19,13 @@ export const router = createRouter({
   routes: [
     { path: '/login', component: Login, meta: { public: true } },
     { path: '/register', component: Register, meta: { public: true } },
-    { path: '/', redirect: '/aircraft' },
+    { path: '/', component: AircraftLibrary },
     { path: '/aircraft', component: AircraftLibrary },
     { path: '/assembly', component: Assembly },
     { path: '/debugging', component: Debugging },
     { path: '/flight', component: FlightLab },
     { path: '/training', component: MyTraining, meta: { roles: ['student'] } },
+    { path: '/review', component: LearningReview },
     { path: '/history', component: History },
     { path: '/history/:id', component: Replay },
     { path: '/components', component: ComponentLibrary },
@@ -46,6 +48,10 @@ router.beforeEach(async to => {
       path: '/login',
       query: to.fullPath !== '/' ? { redirect: to.fullPath } : undefined,
     }
+  }
+
+  if (to.path === '/') {
+    return auth.user?.role === 'student' ? '/training' : '/teacher'
   }
 
   const roles = Array.isArray(to.meta.roles) ? to.meta.roles.map(String) : []

@@ -33,7 +33,7 @@
             <div class="task-meta"><div><span>建议时间</span><b>{{ item.recommended_minutes }} min</b></div><div><span>截止</span><b>{{ dueText(item.due_at) }}</b></div></div>
             <div v-if="item.run_status === 'completed'" class="completed-result"><span>已完成</span><b>{{ scoreText(item.score) }}<em>/100</em></b><small>用时 {{ durationText(item.elapsed_seconds) }}</small></div>
             <div v-else-if="item.run_status !== 'not_started'" class="progress-state"><i></i><span>{{ trainingStatusText(item.run_stage || item.run_status) }} · 已记录 {{ durationText(item.elapsed_seconds) }}</span></div>
-            <button :disabled="startingId === item.id || item.run_status === 'completed'" @click="startAssignment(item)">{{ startingId === item.id ? '正在进入…' : taskActionText(item) }}</button>
+            <button :disabled="startingId === item.id" @click="startAssignment(item)">{{ startingId === item.id ? '正在进入…' : taskActionText(item) }}</button>
           </article>
         </div>
       </section>
@@ -83,6 +83,10 @@ async function joinClass(): Promise<void> {
 async function startAssignment(item: StudentAssignmentView): Promise<void> {
   startingId.value = item.id
   try {
+    if (item.run_status === 'completed' && item.run_id) {
+      await router.push({ path: '/review', query: { run: String(item.run_id) } })
+      return
+    }
     const run = await studentTrainingApi.startAssignment(item.id, assembly.activeAircraftId)
     await router.push(buildStudentTrainingRoute({
       runId: run.id, assignmentId: item.id, scenarioId: run.scenario_id, status: run.stage || run.status,
@@ -93,7 +97,7 @@ async function startAssignment(item: StudentAssignmentView): Promise<void> {
 
 
 function taskActionText(item: StudentAssignmentView): string {
-  if (item.run_status === 'completed') return '已完成 · 成绩已锁定'
+  if (item.run_status === 'completed') return '查看训练复盘'
   if (item.run_stage === 'awaiting_flight' || item.run_status === 'awaiting_flight') return '进入飞行验证'
   if (item.run_status !== 'not_started') return '继续实训'
   return '开始实训'

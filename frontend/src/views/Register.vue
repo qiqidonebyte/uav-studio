@@ -82,7 +82,7 @@ async function submit(): Promise<void> {
       display_name: form.displayName,
       password: form.password,
     })
-    await router.replace('/aircraft')
+    await router.replace('/training')
   } catch {
     message.value = auth.error || '注册失败。'
   }

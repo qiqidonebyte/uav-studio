@@ -12,10 +12,11 @@
       </div>
 
       <nav>
+        <RouterLink v-if="authStore.user?.role === 'student'" to="/training">我的实训</RouterLink>
         <RouterLink to="/assembly">无人机装配</RouterLink>
         <RouterLink to="/debugging">系统调试</RouterLink>
-        <RouterLink v-if="authStore.user?.role === 'student'" to="/training">我的实训</RouterLink>
         <RouterLink to="/flight">飞行实验</RouterLink>
+        <RouterLink to="/review">训练复盘</RouterLink>
         <RouterLink to="/history">实验记录</RouterLink>
         <RouterLink to="/components">组件库</RouterLink>
         <RouterLink v-if="isTeacherRole" to="/teacher">教师工作台</RouterLink>
@@ -49,17 +50,22 @@
         <button class="logout-chip" title="退出登录" @click="logout">退出</button>
       </div>
     </header>
+    <LearningTaskNav :role="learningRole" @open-guide="guideOpen = true" />
     <RouterView />
+    <LearningGuidePanel :open="guideOpen" :role="learningRole" @close="guideOpen = false" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import { useAssemblyStore } from './stores/assembly'
 import { useSimulationStore } from './stores/simulation'
 import { useSettingsStore } from './stores/settings'
+import LearningTaskNav from './components/LearningTaskNav.vue'
+import LearningGuidePanel from './components/LearningGuidePanel.vue'
+import type { LearningRole } from './utils/learningGuide'
 
 const router = useRouter()
 const route = useRoute()
@@ -67,6 +73,11 @@ const authStore = useAuthStore()
 const simulationStore = useSimulationStore()
 const assemblyStore = useAssemblyStore()
 const settingsStore = useSettingsStore()
+const guideOpen = ref(false)
+const learningRole = computed<LearningRole>(() => {
+  const role = authStore.user?.role
+  return role === 'teacher' || role === 'admin' ? role : 'student'
+})
 
 const roleLabel = computed(() => {
   if (authStore.user?.role === 'admin') return '管理员'
@@ -118,6 +129,8 @@ watch(
   () => { void initializeWorkspace() },
   { immediate: true },
 )
+
+watch(() => route.fullPath, () => { guideOpen.value = false })
 
 onMounted(() => {
   globalThis.addEventListener?.('uav-auth-expired', onAuthExpired)

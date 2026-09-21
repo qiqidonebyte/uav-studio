@@ -97,6 +97,18 @@
         </div>
       </section>
 
+      <DiagnosisWorksheet
+        ref="diagnosisWorksheetRef"
+        :user-id="auth.user?.id ?? null"
+        :role="learningRole"
+        :run-id="assignedRunId"
+        :scenario-id="activeTrainingCase?.id || assignedScenarioId || scenario"
+        :scenario-title="activeTrainingCase?.title || '自由调试'"
+        :symptom="activeTrainingCase?.student_brief.symptom || ''"
+        @ready-change="diagnosisWorksheetReady = $event"
+        @saved="diagnosisWorksheetSaved = true"
+      />
+
       <template v-if="activeSection === 'sensors'">
         <div class="sensor-workbench">
           <section class="surface sensor-hero-surface">
@@ -894,9 +906,12 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import DebugMotorScene from '../components/DebugMotorScene.vue'
+import DiagnosisWorksheet, { type DiagnosisWorksheetSnapshot } from '../components/DiagnosisWorksheet.vue'
 import { px4Api, type Px4SensorKey, type Px4Telemetry } from '../api/px4'
 import { studentTrainingApi } from '../api/teacher'
 import { useAssemblyStore } from '../stores/assembly'
+import { useAuthStore } from '../stores/auth'
+import type { LearningRole } from '../utils/learningGuide'
 import type { MotorName } from '../types/aircraft'
 import type { MotorVector, TelemetryFrame } from '../types/telemetry'
 import { calculateDebugScore, resolveMotorResponse, type DebugScenario } from '../utils/debugging'
@@ -921,6 +936,7 @@ interface DebugLog {
 }
 
 const assemblyStore = useAssemblyStore()
+const auth = useAuthStore()
 const route = useRoute()
 const activeSection = ref<SectionKey>('power')
 const scenario = ref<ScenarioKey>('standard')
@@ -999,6 +1015,14 @@ const trainingWrongOperations = ref(0)
 const trainingCurrentHint = ref('')
 const trainingSubmittedEvaluation = ref<TrainingEvaluation | null>(null)
 const trainingRemoteStatus = ref('')
+const diagnosisWorksheetReady = ref(false)
+const diagnosisWorksheetSaved = ref(false)
+const diagnosisWorksheetRef = ref<{
+  isComplete: () => boolean
+  save: () => Promise<DiagnosisWorksheetSnapshot>
+  getSnapshot: () => DiagnosisWorksheetSnapshot
+} | null>(null)
+const learningRole = computed<LearningRole>(() => auth.user?.role === 'teacher' || auth.user?.role === 'admin' ? auth.user.role : 'student')
 let trainingInternalMutation = false
 let trainingSyncTimer: number | undefined
 let trainingSyncBusy = false
@@ -1752,6 +1776,13 @@ function requestTrainingHint(): void {
 
 async function submitTrainingCase(): Promise<void> {
   if (!activeTrainingCase.value) return
+  const worksheet = diagnosisWorksheetRef.value
+  if (auth.user?.role === 'student' && assignedRunId.value && !worksheet?.isComplete()) {
+    trainingCurrentHint.value = '提交课程诊断前，请先完成诊断工作单的现象、证据、原因、修复和验证五项。'
+    appendLog('诊断工作单未完成', '课程任务要求先形成完整证据链，再提交诊断。', 'warn')
+    return
+  }
+  if (worksheet) await worksheet.save()
   const evaluation = trainingEvaluationPreview.value
   if (!evaluation) return
   trainingSubmittedEvaluation.value = { ...evaluation }
@@ -1795,6 +1826,7 @@ function trainingPayload(passed = false) {
       visited_sections: [...trainingVisitedSections.value],
       condition_state: { ...trainingConditionState.value },
       evaluation,
+      diagnosis_worksheet: diagnosisWorksheetRef.value?.getSnapshot() ?? null,
     },
   }
 }
@@ -2710,6 +2742,11 @@ watch(activeSection, next => {
   if (next === 'rc' && !rcLoadedOnce.value) void loadRcParameters()
 })
 
+watch(() => route.query.section, value => {
+  const section = Array.isArray(value) ? value[0] : value
+  if (section && steps.some(item => item.key === section)) activeSection.value = section as SectionKey
+})
+
 watch(currentRcChannels, values => updateRcCapture(values), { deep: true })
 
 watch([trainingHintsUsed, trainingWrongOperations], () => scheduleTrainingProgressSync())
@@ -2750,7 +2787,10 @@ watch(bridgeMode, (next, previous) => {
 })
 
 onMounted(async () => {
+  await auth.initialize()
   await assemblyStore.initialize()
+  const requestedSection = Array.isArray(route.query.section) ? route.query.section[0] : route.query.section
+  if (requestedSection && steps.some(item => item.key === requestedSection)) activeSection.value = requestedSection as SectionKey
   try {
     trainingCases.value = await loadFaultTrainingCases()
     trainingCatalogError.value = ''

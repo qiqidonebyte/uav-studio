@@ -6,6 +6,7 @@
         <div v-if="assignedRunId" :class="['course-flight-banner', { passed: flightValidationReported }]">
           <b>{{ flightValidationReported ? '课程飞行验证已记录' : '课程实训 · 飞行验证阶段' }}</b>
           <small>{{ flightValidationMessage || '按 解锁 → 起飞 → 悬停 → 降落 完成闭环，系统将自动回写 TrainingRun。' }}</small>
+          <RouterLink v-if="flightValidationReported && assignedRunId" :to="{ path: '/review', query: { run: String(assignedRunId) } }">查看训练复盘</RouterLink>
           <button v-if="flightLandCommanded && !flightValidationReported" :disabled="flightValidationReporting" @click="maybeReportFlightValidation">{{ flightValidationReporting ? '同步中…' : '重新同步飞行结果' }}</button>
         </div>
 
@@ -752,6 +753,7 @@ function deg(radians: number): string {
 .course-flight-banner b { font-size:9px; }
 .course-flight-banner small { font-size:8px; line-height:1.45; }
 .course-flight-banner button { justify-self:start; margin-top:3px; border:1px solid currentColor; border-radius:6px; background:transparent; color:inherit; padding:4px 7px; font-size:7px; cursor:pointer; }
+.course-flight-banner a { justify-self:start; margin-top:3px; border-radius:6px; background:#2c7b52; color:#fff; padding:5px 8px; font-size:7px; font-weight:800; text-decoration:none; }
 .flight-control-panel button:disabled {
   cursor:not-allowed!important;
   opacity:1!important;
