@@ -87,6 +87,7 @@ export const studentTrainingApi = {
     event_type?: string
     title: string
     detail?: string
+    event_key?: string
     payload?: Record<string, unknown>
   }): Promise<TrainingEventView> {
     return (await api.post<TrainingEventView>(`/training/runs/${runId}/events`, payload)).data
@@ -116,6 +117,10 @@ export const studentTrainingApi = {
     return (await api.post<TrainingRunView>(`/training/runs/${runId}/submit`, payload)).data
   },
   async flightValidation(runId: number, passed = true, detail = ''): Promise<TrainingRunView> {
-    return (await api.post<TrainingRunView>(`/training/runs/${runId}/flight-validation`, { passed, detail })).data
+    const result = (await api.post<TrainingRunView>(`/training/runs/${runId}/flight-validation`, { passed, detail })).data
+    if (result.status === 'completed') {
+      try { await api.post(`/training/runs/${runId}/px4/release`) } catch { /* backend also releases completed runs */ }
+    }
+    return result
   },
 }

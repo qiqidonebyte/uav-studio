@@ -10,6 +10,11 @@ export interface Px4Status {
   armed: boolean
   last_error: string
   uptime_s: number
+  session_status?: 'unassigned' | 'queued' | 'starting' | 'ready' | 'active' | 'released' | 'failed'
+  queue_position?: number
+  slot_id?: number | null
+  slot_port?: number
+  run_id?: number
 }
 
 export type Px4SensorKey = 'gyro' | 'accelerometer' | 'compass' | 'barometer'
@@ -95,6 +100,17 @@ export interface Px4CommandResult {
   [key: string]: unknown
 }
 
+function trainingRunId(): number | null {
+  if (typeof window === 'undefined') return null
+  const value = Number(new URLSearchParams(window.location.search).get('run'))
+  return Number.isInteger(value) && value > 0 ? value : null
+}
+
+function apiBase(): string {
+  const explicit = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api'
+  return explicit.replace(/\/$/, '')
+}
+
 function defaultBridgeBase(): string {
   const explicit = import.meta.env.VITE_PX4_BRIDGE_URL as string | undefined
   if (explicit) return explicit.replace(/\/$/, '')
@@ -102,11 +118,19 @@ function defaultBridgeBase(): string {
   return `${window.location.protocol}//${window.location.hostname}:8001/api/px4`
 }
 
-const base = defaultBridgeBase()
+function endpointBase(): { base: string; training: boolean } {
+  const runId = trainingRunId()
+  if (runId !== null) {
+    return { base: `${apiBase()}/training/runs/${runId}/px4`, training: true }
+  }
+  return { base: defaultBridgeBase(), training: false }
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${base}${path}`, {
+  const endpoint = endpointBase()
+  const response = await fetch(`${endpoint.base}${path}`, {
     ...init,
+    credentials: endpoint.training ? 'include' : 'omit',
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
   })
   const body = await response.json().catch(() => ({}))
@@ -120,10 +144,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const px4Api = {
   status: () => request<Px4Status>('/status'),
   telemetry: () => request<Px4Telemetry>('/telemetry'),
-  connect: (connectionUrl?: string) => request<Px4Status>('/connect', {
-    method: 'POST',
-    body: JSON.stringify({ connection_url: connectionUrl || null }),
-  }),
+  connect: (connectionUrl?: string) => {
+    const training = trainingRunId() !== null
+    return request<Px4Status>('/connect', {
+      method: 'POST',
+      ...(training ? {} : { body: JSON.stringify({ connection_url: connectionUrl || null }) }),
+    })
+  },
   disconnect: () => request<Px4Status>('/disconnect', { method: 'POST' }),
   requestStreams: () => request<{ ok: boolean }>('/request-streams', { method: 'POST' }),
   arm: () => request<Px4CommandResult>('/arm', { method: 'POST' }),

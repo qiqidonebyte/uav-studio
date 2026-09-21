@@ -19,6 +19,18 @@ def build_client(database_path: Path) -> Iterator[TestClient]:
         yield client
 
 
+def sync_assembly_instances(aircraft: dict, **slot_updates: int | None) -> None:
+    """Keep the 3D assembly contract aligned with component selections."""
+    instances = aircraft["assembly_instances"]
+    for slot, component_id in slot_updates.items():
+        if component_id is None:
+            instances[:] = [item for item in instances if item["slot"] != slot]
+            continue
+        for item in instances:
+            if item["slot"] == slot:
+                item["component_id"] = component_id
+
+
 def test_component_catalog_api_returns_seed_components(tmp_path: Path) -> None:
     with build_client(tmp_path / "components.db") as client:
         response = client.get("/api/components")
@@ -57,6 +69,7 @@ def test_replacing_components_recalculates_and_persists_engineering_data(tmp_pat
     with build_client(database_path) as client:
         current = client.get("/api/aircraft/1").json()["aircraft"]
         current.update({"motor_id": 11, "propeller_id": 31, "battery_id": 41})
+        sync_assembly_instances(current, motor=11, propeller=31, battery=41)
         update_response = client.put("/api/aircraft/1", json=current)
         reload_response = client.get("/api/aircraft/1")
     assert update_response.status_code == 200
@@ -72,6 +85,7 @@ def test_installing_payload_updates_mass_cg_and_flight_time(tmp_path: Path) -> N
     with build_client(tmp_path / "payload.db") as client:
         current = client.get("/api/aircraft/1").json()["aircraft"]
         without_payload = current | {"payload_id": None, "payload_position_m": None}
+        sync_assembly_instances(without_payload, payload=None)
         first = client.put("/api/aircraft/1", json=without_payload).json()
         with_payload = current | {"payload_id": 80, "payload_position_m": {"x": 0.1, "y": 0.0, "z": -0.12}}
         second = client.put("/api/aircraft/1", json=with_payload).json()

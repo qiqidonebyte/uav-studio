@@ -9,6 +9,7 @@ from typing import Callable, Iterator, Literal
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.models import (
@@ -21,6 +22,7 @@ from backend.models import (
     UserRecord,
 )
 from backend.training.catalog import FaultTrainingCase, load_training_cases
+from backend.classroom_reliability import release_px4_for_run
 
 
 class StrictModel(BaseModel):
@@ -266,6 +268,7 @@ class TrainingEventCreate(StrictModel):
     event_type: str = Field(default="operation", min_length=1, max_length=64)
     title: str = Field(min_length=1, max_length=180)
     detail: str = Field(default="", max_length=1200)
+    event_key: str | None = Field(default=None, max_length=160)
     payload: dict = Field(default_factory=dict)
 
 
@@ -275,6 +278,7 @@ class TrainingEventView(StrictModel):
     event_type: str
     title: str
     detail: str
+    event_key: str | None = None
     payload: dict
 
 
@@ -743,6 +747,7 @@ def _event_view(record: TrainingEventRecord) -> TrainingEventView:
         event_type=record.event_type,
         title=record.title,
         detail=record.detail or "",
+        event_key=record.event_key,
         payload=record.payload_json or {},
     )
 
@@ -773,6 +778,7 @@ def _append_event(
     title: str,
     detail: str = "",
     payload: dict | None = None,
+    event_key: str | None = None,
 ) -> TrainingEventRecord:
     event = TrainingEventRecord(
         run_id=run.id,
@@ -780,6 +786,7 @@ def _append_event(
         event_type=event_type,
         title=title,
         detail=detail,
+        event_key=event_key,
         payload_json=payload or {},
     )
     session.add(event)
@@ -1456,6 +1463,15 @@ def register_teacher_workbench_routes(
         run = _run_access_or_404(session, current_user, run_id)
         if run.student_user_id != current_user.id:
             raise HTTPException(status_code=403, detail="只有学生本人可写入实训过程")
+        if command.event_key:
+            existing = session.scalar(
+                select(TrainingEventRecord).where(
+                    TrainingEventRecord.run_id == run.id,
+                    TrainingEventRecord.event_key == command.event_key,
+                )
+            )
+            if existing is not None:
+                return _event_view(existing)
         event = _append_event(
             session,
             run,
@@ -1463,8 +1479,22 @@ def register_teacher_workbench_routes(
             title=command.title,
             detail=command.detail,
             payload=command.payload,
+            event_key=command.event_key,
         )
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            if command.event_key:
+                existing = session.scalar(
+                    select(TrainingEventRecord).where(
+                        TrainingEventRecord.run_id == run.id,
+                        TrainingEventRecord.event_key == command.event_key,
+                    )
+                )
+                if existing is not None:
+                    return _event_view(existing)
+            raise
         session.refresh(event)
         return _event_view(event)
 
@@ -1660,6 +1690,8 @@ def register_teacher_workbench_routes(
             )
         session.commit()
         session.refresh(run)
+        if run.status == "completed":
+            release_px4_for_run(session, run.id, reason="飞行验证完成")
         return _run_view(session, run)
 
     @app.get("/api/admin/users", response_model=list[AdminUserView])

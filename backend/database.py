@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, inspect, text
+from sqlalchemy import Engine, create_engine, event, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -12,18 +12,36 @@ DEFAULT_DATABASE_URL = f"sqlite:///{DEFAULT_DATABASE_PATH.as_posix()}"
 DEFAULT_SIMULATIONS_DIR = PROJECT_ROOT / "data" / "simulations"
 
 
+def _configure_sqlite_engine(engine: Engine) -> Engine:
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            try:
+                cursor.execute("PRAGMA journal_mode=WAL")
+            except Exception:
+                # In-memory SQLite cannot enable WAL; classroom file DB can.
+                pass
+        finally:
+            cursor.close()
+    return engine
+
+
 def build_engine(database_url: str = DEFAULT_DATABASE_URL) -> Engine:
     if database_url.endswith(":memory:"):
-        return create_engine(
+        return _configure_sqlite_engine(create_engine(
             database_url,
-            connect_args={"check_same_thread": False},
+            connect_args={"check_same_thread": False, "timeout": 5.0},
             poolclass=StaticPool,
-        )
+        ))
     if database_url.startswith("sqlite"):
-        return create_engine(
+        return _configure_sqlite_engine(create_engine(
             database_url,
-            connect_args={"check_same_thread": False},
-        )
+            connect_args={"check_same_thread": False, "timeout": 5.0},
+        ))
     return create_engine(database_url)
 
 
@@ -51,6 +69,16 @@ def ensure_schema_compatibility(engine: Engine) -> None:
             migrations.append("ALTER TABLE users ADD COLUMN is_active INTEGER")
         if "created_at" not in user_columns:
             migrations.append("ALTER TABLE users ADD COLUMN created_at VARCHAR(64)")
+
+    if "training_runs" in table_names:
+        run_columns = {column["name"] for column in inspector.get_columns("training_runs")}
+        if "version" not in run_columns:
+            migrations.append("ALTER TABLE training_runs ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
+
+    if "training_events" in table_names:
+        event_columns = {column["name"] for column in inspector.get_columns("training_events")}
+        if "event_key" not in event_columns:
+            migrations.append("ALTER TABLE training_events ADD COLUMN event_key VARCHAR(160)")
 
     if "aircraft" in table_names:
         aircraft_columns = {
@@ -95,5 +123,15 @@ def ensure_schema_compatibility(engine: Engine) -> None:
                 text(
                     "CREATE INDEX IF NOT EXISTS ix_aircraft_owner_user_id "
                     "ON aircraft (owner_user_id)"
+                )
+            )
+
+    if "training_events" in table_names:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_training_event_key "
+                    "ON training_events (run_id, event_key) "
+                    "WHERE event_key IS NOT NULL"
                 )
             )

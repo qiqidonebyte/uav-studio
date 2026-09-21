@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 
 from backend.database import (
     DEFAULT_DATABASE_URL,
@@ -43,6 +44,11 @@ from backend.aircraft_library import (
     utc_now_iso,
 )
 from backend.component_library import register_component_library_routes
+from backend.classroom_reliability import (
+    recover_classroom_reliability,
+    register_classroom_reliability_routes,
+    shutdown_classroom_reliability,
+)
 from backend.auth import (
     AIRCRAFT_LIMIT_PER_USER,
     SESSION_COOKIE_NAME,
@@ -262,6 +268,7 @@ def create_app(
         ensure_schema_compatibility(engine)
         with session_factory() as session:
             seed_database(session)
+            recover_classroom_reliability(session)
             ensure_aircraft_metadata(session)
             admin = ensure_admin_user(session)
             ensure_legacy_aircraft_ownership(session, admin)
@@ -270,6 +277,7 @@ def create_app(
             ) + 1
             simulation_manager.set_next_id(next_simulation_id)
         yield
+        shutdown_classroom_reliability()
         await simulation_manager.shutdown()
         engine.dispose()
 
@@ -292,6 +300,13 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(StaleDataError)
+    async def stale_training_write_handler(_request: Request, _error: StaleDataError):
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": "实训状态已被另一个请求更新，请刷新后重试"},
+        )
 
     def get_db(request: Request) -> Iterator[Session]:
         with request.app.state.session_factory() as session:
@@ -385,6 +400,7 @@ def create_app(
 
     register_auth_routes(app, get_db)
     register_user_settings_routes(app, get_db, get_current_user)
+    register_classroom_reliability_routes(app, get_db, get_current_user)
     register_component_library_routes(app, get_db)
 
     @app.get("/api/health")

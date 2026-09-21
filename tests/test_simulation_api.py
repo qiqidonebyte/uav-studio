@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -14,6 +15,15 @@ def build_client(database_path: Path) -> TestClient:
 
 
 def create_simulation(client: TestClient) -> dict:
+    if client.get("/api/auth/me").status_code != 200:
+        login = client.post(
+            "/api/auth/login",
+            json={
+                "username": "admin",
+                "password": os.getenv("UAV_ADMIN_PASSWORD", "123456"),
+            },
+        )
+        assert login.status_code == 200
     response = client.post("/api/simulations", json={"aircraft_id": 1})
     assert response.status_code == 201
     return response.json()
@@ -73,7 +83,7 @@ def test_simulation_rejects_arm_before_start(tmp_path: Path) -> None:
     assert response.status_code == 409
 
 
-def test_only_one_active_simulation_is_kept(tmp_path: Path) -> None:
+def test_multiple_authenticated_simulations_are_kept(tmp_path: Path) -> None:
     with build_client(tmp_path / "single-simulation.db") as client:
         first = create_simulation(client)
         second = create_simulation(client)
@@ -81,7 +91,8 @@ def test_only_one_active_simulation_is_kept(tmp_path: Path) -> None:
         first_response = client.get(f"/api/simulations/{first['id']}")
         second_response = client.get(f"/api/simulations/{second['id']}")
 
-    assert first_response.status_code == 404
+    assert first["id"] != second["id"]
+    assert first_response.status_code == 200
     assert second_response.status_code == 200
 
 

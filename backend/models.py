@@ -146,6 +146,9 @@ class TrainingRunRecord(Base):
     prearm_passed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     flight_validation_passed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     result_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    __mapper_args__ = {"version_id_col": version}
 
 
 class TrainingEventRecord(Base):
@@ -157,4 +160,20 @@ class TrainingEventRecord(Base):
     event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(180), nullable=False)
     detail: Mapped[str | None] = mapped_column(String(1200), nullable=True)
+    event_key: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
     payload_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class PX4SessionRecord(Base):
+    __tablename__ = "px4_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
+    student_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    slot_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", index=True)
+    created_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    last_seen_at: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    released_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
