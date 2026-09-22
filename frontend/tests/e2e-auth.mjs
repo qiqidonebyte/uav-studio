@@ -39,6 +39,17 @@ try {
   if (!loggedIn) {
     await page.goto(`${baseUrl}/register`, { waitUntil: 'networkidle' })
     await page.getByTestId('register-form').waitFor()
+    await page.getByTestId('register-username').fill('a')
+    await page.getByTestId('register-password').fill('123')
+    await page.getByTestId('register-confirm').fill('456')
+    assert.equal(
+      await page.getByTestId('register-submit').isEnabled(),
+      true,
+      'register button should stay enabled so validation feedback is visible',
+    )
+    await page.getByTestId('register-submit').click()
+    assert.match(await page.locator('.field-hint').innerText(), /用户名/)
+
     await page.getByTestId('register-username').fill(username)
     await page.getByTestId('register-display-name').fill('E2E 学生')
     await page.getByTestId('register-password').fill(password)
