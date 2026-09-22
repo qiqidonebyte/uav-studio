@@ -170,6 +170,14 @@ try {
     await page.mouse.up()
     assert.equal(await precisionInputs.nth(0).inputValue(), '1500')
     assert.equal(await precisionInputs.nth(1).inputValue(), '1500')
+
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width * .8, box.y + box.height * .2)
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')))
+    assert.equal(await precisionInputs.nth(0).inputValue(), '1500')
+    assert.equal(await precisionInputs.nth(1).inputValue(), '1500')
+    await page.mouse.up()
   })
 
   finish()

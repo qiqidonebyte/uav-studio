@@ -277,6 +277,7 @@ let assignmentRequestGeneration = 0
 let runRequestGeneration = 0
 let studentRequestGeneration = 0
 let detailRequestGeneration = 0
+let gradeRequestGeneration = 0
 
 const tabs = [
   { key: 'overview' as const, icon: '▦', label: '教学总览', hint: '班级与任务状态' },
@@ -343,20 +344,26 @@ async function publishAssignment(): Promise<void> {
 }
 
 async function refreshGradebook(): Promise<void> {
-  if (!gradeClassId.value) { gradebook.value = null; gradeAnalytics.value = null; return }
+  const generation = ++gradeRequestGeneration
+  const classId = gradeClassId.value
+  if (!classId) { gradebook.value = null; gradeAnalytics.value = null; return }
   try {
-    [gradebook.value, gradeAnalytics.value] = await Promise.all([teacherApi.gradebook(gradeClassId.value), teacherApi.analytics(gradeClassId.value)])
-  } catch (caught) { showNotice(apiError(caught)) }
+    const [nextGradebook, nextAnalytics] = await Promise.all([teacherApi.gradebook(classId), teacherApi.analytics(classId)])
+    if (generation !== gradeRequestGeneration) return
+    gradebook.value = nextGradebook
+    gradeAnalytics.value = nextAnalytics
+  } catch (caught) { if (generation === gradeRequestGeneration) showNotice(apiError(caught)) }
 }
 async function downloadGradebook(): Promise<void> {
   if (!gradeClassId.value || exporting.value) return
+  const classId = gradeClassId.value
   exporting.value = true
   try {
-    const blob = await teacherApi.exportGradebook(gradeClassId.value)
+    const blob = await teacherApi.exportGradebook(classId)
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = `UAV-Studio-成绩册-${gradeClassId.value}.csv`
+    anchor.download = `UAV-Studio-成绩册-${classId}.csv`
     anchor.click(); URL.revokeObjectURL(url)
   } catch (caught) { showNotice(apiError(caught)) } finally { exporting.value = false }
 }

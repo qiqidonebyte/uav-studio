@@ -14,6 +14,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import backend.classroom_reliability as classroom_reliability  # noqa: E402
 from backend.classroom_reliability import (  # noqa: E402
     recover_classroom_reliability,
     register_classroom_reliability_routes,
@@ -191,6 +192,46 @@ def test_telemetry_keeps_queue_and_starting_slot_state(tmp_path, monkeypatch):
     assert starting["session_status"] == "starting"
     assert starting["slot_id"] == 1
     assert starting["queue_position"] == 0
+
+
+def test_active_queue_poll_refreshes_waiting_student_before_idle_sweep(tmp_path, monkeypatch):
+    fake_px4(monkeypatch)
+    client, factory, _ = build_client(tmp_path)
+    for index in range(13):
+        response = client.post(
+            f"/api/training/runs/{1000 + index}/px4/session",
+            headers=headers(100 + index),
+        )
+        assert response.status_code == 200
+
+    with factory() as session:
+        waiting = session.scalar(select(PX4SessionRecord).where(PX4SessionRecord.run_id == 1012))
+        assert waiting is not None and waiting.status == "queued"
+        waiting.last_seen_at = "2020-01-01T00:00:00+00:00"
+        session.commit()
+
+    monkeypatch.setattr(classroom_reliability, "_last_poll_promotion_at", 0.0)
+    response = client.get("/api/training/runs/1012/px4/telemetry", headers=headers(112))
+    assert response.status_code == 200
+    assert response.json()["session_status"] == "queued"
+    assert response.json()["queue_position"] == 1
+    with factory() as session:
+        waiting = session.scalar(select(PX4SessionRecord).where(PX4SessionRecord.run_id == 1012))
+        assert waiting is not None and waiting.status == "queued"
+
+
+def test_queue_promotion_is_coalesced_during_high_frequency_polling(monkeypatch):
+    calls: list[object] = []
+    ticks = iter([10.0, 10.2, 11.1])
+    monkeypatch.setattr(classroom_reliability, "_last_poll_promotion_at", 0.0)
+    monkeypatch.setattr(classroom_reliability.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(classroom_reliability, "_promote_queue", lambda session: calls.append(session))
+
+    marker = object()
+    classroom_reliability._promote_queue_from_poll(marker)
+    classroom_reliability._promote_queue_from_poll(marker)
+    classroom_reliability._promote_queue_from_poll(marker)
+    assert calls == [marker, marker]
 
 
 def test_student_cannot_operate_another_students_slot(tmp_path, monkeypatch):

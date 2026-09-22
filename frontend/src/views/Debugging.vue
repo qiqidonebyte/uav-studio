@@ -327,13 +327,16 @@
                 </div>
               </div>
               <div :class="['virtual-transmitter', { disabled: !rcVirtualMode }]">
+                <img
+                  class="transmitter-photo"
+                  :src="rcTransmitterPhoto"
+                  alt="双摇杆无人机遥控器正面"
+                  draggable="false"
+                />
                 <div class="transmitter-topline">
                   <span><i></i> UAV TRAINER</span>
                   <b>MODE 2</b>
-                  <span>教学遥控器 <i></i></span>
-                </div>
-                <div class="transmitter-switches" aria-hidden="true">
-                  <i></i><i></i><span>POWER</span><i></i><i></i>
+                  <span>真实外观教学遥控器 <i></i></span>
                 </div>
               <div class="rc-stick-grid">
                 <div class="stick-card">
@@ -346,6 +349,7 @@
                     @pointermove="moveVirtualStick('left', $event)"
                     @pointerup="releaseVirtualStick('left', $event)"
                     @pointercancel="releaseVirtualStick('left', $event)"
+                    @lostpointercapture="releaseVirtualStick('left', $event)"
                   >
                     <i class="stick-axis horizontal"></i><i class="stick-axis vertical"></i>
                     <span class="stick-dot" :style="leftStickStyle"></span>
@@ -363,6 +367,7 @@
                     @pointermove="moveVirtualStick('right', $event)"
                     @pointerup="releaseVirtualStick('right', $event)"
                     @pointercancel="releaseVirtualStick('right', $event)"
+                    @lostpointercapture="releaseVirtualStick('right', $event)"
                   >
                     <i class="stick-axis horizontal"></i><i class="stick-axis vertical"></i>
                     <span class="stick-dot" :style="rightStickStyle"></span>
@@ -372,9 +377,10 @@
                 </div>
               </div>
                 <div class="transmitter-footer">
-                  <small>{{ rcVirtualMode ? '拖动摇杆进行调试 · 左摇杆油门松手保持' : '当前显示真实 RC 输入，虚拟摇杆不可操作' }}</small>
+                  <small>{{ rcVirtualMode ? '拖动照片上的摇杆 · 左摇杆油门松手保持' : '当前显示真实 RC 输入，虚拟摇杆不可操作' }}</small>
                   <button v-if="rcVirtualMode" @click="resetVirtualRc">回中 / 油门最低</button>
                 </div>
+                <a class="transmitter-credit" href="https://commons.wikimedia.org/wiki/File:FrSky_X9D_Taranis_plus_2.4_GHz_handheld_RC_transmitter.jpg" target="_blank" rel="noopener">底图：Lucasbosch · CC BY-SA 3.0</a>
               </div>
               <div v-if="rcVirtualMode" class="virtual-rc-controls">
                 <details>
@@ -984,6 +990,7 @@ import { aircraftFingerprint, clearPreflightSnapshot, loadPreflightSnapshot, pre
 import { px4SessionPresentation } from '../utils/px4Session'
 import { loadFaultTrainingCases, scoreFaultTraining, trainingCategoryText, trainingDifficultyText, type FaultTrainingCase, type TrainingCategory, type TrainingEvaluation } from '../utils/training'
 import { centeredPwm, releasedStickValues, throttlePwm, virtualStickPoint, type VirtualStickSide } from '../utils/virtualRc'
+import rcTransmitterPhoto from '../assets/remote/rc-transmitter-frsky-x9d.jpg'
 
 type SectionKey = 'sensors' | 'rc' | 'power' | 'safety' | 'preflight'
 type ScenarioKey = DebugScenario
@@ -1056,7 +1063,10 @@ const rcObservedMin = ref<number[]>(Array(18).fill(Number.POSITIVE_INFINITY))
 const rcObservedMax = ref<number[]>(Array(18).fill(Number.NEGATIVE_INFINITY))
 let timer: number | undefined
 let stopTimer: number | undefined
+let mappingRepairTimer: number | undefined
 let motorTestGeneration = 0
+let rcLoadGeneration = 0
+let safetyLoadGeneration = 0
 let px4PollTimer: number | undefined
 let pollingPx4 = false
 let logId = 0
@@ -2201,9 +2211,14 @@ function moveVirtualStick(side: VirtualStickSide, event: PointerEvent): void {
 
 function releaseVirtualStick(side: VirtualStickSide, event: PointerEvent): void {
   if (activeVirtualStick?.side !== side || activeVirtualStick.pointerId !== event.pointerId) return
-  const target = event.currentTarget as HTMLElement
-  if (target.hasPointerCapture?.(event.pointerId)) target.releasePointerCapture(event.pointerId)
   const values = releasedStickValues(side, virtualRolePwm('throttle'))
+  Object.entries(values).forEach(([role, value]) => setVirtualRolePwm(role as RcRole, value))
+  activeVirtualStick = null
+}
+
+function releaseActiveVirtualStick(): void {
+  if (!activeVirtualStick) return
+  const values = releasedStickValues(activeVirtualStick.side, virtualRolePwm('throttle'))
   Object.entries(values).forEach(([role, value]) => setVirtualRolePwm(role as RcRole, value))
   activeVirtualStick = null
 }
@@ -2336,10 +2351,12 @@ function loadRecommendedRcProfile(): void {
 
 async function loadRcParameters(): Promise<void> {
   if (rcBusy.value) return
+  const generation = ++rcLoadGeneration
+  const requestedMode = bridgeMode.value
   rcBusy.value = true
   rcMessage.value = ''
   try {
-    if (bridgeMode.value === 'live') {
+    if (requestedMode === 'live') {
       const next = defaultRcDraft(18)
       const failed: string[] = []
       for (const role of rcRoles) {
@@ -2352,7 +2369,7 @@ async function loadRcParameters(): Promise<void> {
           failed.push(`${rcMapParams[role]}: ${errorText(error)}`)
         }
       }
-      const mapped = [...new Set(rcRoles.map(role => Number(next.mapping[role])))]
+      const mapped = [...new Set(rcRoles.map(role => Number(next.mapping[role])).filter(channel => channel >= 1 && channel <= 18))]
       for (const channel of mapped) {
         ensureRcCalibrationForDraft(next, channel)
         const fields = [
@@ -2372,6 +2389,7 @@ async function loadRcParameters(): Promise<void> {
           }
         }
       }
+      if (generation !== rcLoadGeneration || bridgeMode.value !== requestedMode) return
       rcDraft.value = cloneRcDraft(next)
       rcBaselineFlat.value = flattenRcDraft(next)
       rcLoadedOnce.value = true
@@ -2399,11 +2417,12 @@ async function loadRcParameters(): Promise<void> {
       appendLog('载入遥控教学配置', rcMessage.value, rcMessageLevel.value === 'warn' ? 'warn' : 'info')
     }
   } catch (error) {
+    if (generation !== rcLoadGeneration || bridgeMode.value !== requestedMode) return
     rcMessageLevel.value = 'error'
     rcMessage.value = errorText(error)
     appendLog('遥控参数读取失败', rcMessage.value, 'error')
   } finally {
-    rcBusy.value = false
+    if (generation === rcLoadGeneration) rcBusy.value = false
   }
 }
 
@@ -2520,10 +2539,12 @@ function demoSafetyProfile(): SafetyDraft {
 
 async function loadSafetyParameters(): Promise<void> {
   if (safetyBusy.value) return
+  const generation = ++safetyLoadGeneration
+  const requestedMode = bridgeMode.value
   safetyBusy.value = true
   safetyMessage.value = ''
   try {
-    if (bridgeMode.value === 'live') {
+    if (requestedMode === 'live') {
       const next: SafetyDraft = { ...safetyDraft.value }
       let loaded = 0
       const failed: string[] = []
@@ -2539,6 +2560,7 @@ async function loadSafetyParameters(): Promise<void> {
         }
       }
       if (loaded === 0) throw new Error(failed[0] || '没有读取到安全参数')
+      if (generation !== safetyLoadGeneration || bridgeMode.value !== requestedMode) return
       safetyDraft.value = next
       safetyBaseline.value = { ...next }
       safetyDirty.value = {}
@@ -2561,11 +2583,12 @@ async function loadSafetyParameters(): Promise<void> {
       appendLog('载入安全设置', safetyMessage.value, scenario.value === 'failsafe' ? 'warn' : 'info')
     }
   } catch (error) {
+    if (generation !== safetyLoadGeneration || bridgeMode.value !== requestedMode) return
     safetyMessageLevel.value = 'error'
     safetyMessage.value = errorText(error)
     appendLog('安全参数读取失败', safetyMessage.value, 'error')
   } finally {
-    safetyBusy.value = false
+    if (generation === safetyLoadGeneration) safetyBusy.value = false
   }
 }
 
@@ -2728,7 +2751,9 @@ async function testMotor(command: MotorName): Promise<void> {
 function resetMotorVisuals(): void {
   motorTestGeneration += 1
   if (stopTimer) window.clearTimeout(stopTimer)
+  if (mappingRepairTimer) window.clearTimeout(mappingRepairTimer)
   stopTimer = undefined
+  mappingRepairTimer = undefined
   motorOutputs.value = [0, 0, 0, 0]
   commandedMotor.value = null
   actualMotor.value = null
@@ -2755,8 +2780,11 @@ function repairMotorMapping(): void {
   }
   mappingRepaired.value = true
   resetMotorVisuals()
+  const generation = motorTestGeneration
   appendLog('学生修改电机映射参数', '将 M1–M4 映射恢复为理论顺序', 'warn')
-  window.setTimeout(() => {
+  mappingRepairTimer = window.setTimeout(() => {
+    mappingRepairTimer = undefined
+    if (generation !== motorTestGeneration) return
     commandedMotor.value = 'M1'
     actualMotor.value = 'M1'
     motorVerified.value = { ...motorVerified.value, M1: true }
@@ -2764,8 +2792,7 @@ function repairMotorMapping(): void {
     motorOutputs.value = [.45, 0, 0, 0]
     appendLog('二次测试通过', 'M1 响应正常，电机映射恢复正确', 'success')
     stopTimer = window.setTimeout(() => {
-      motorOutputs.value = [0, 0, 0, 0]
-      actualMotor.value = null
+      if (generation === motorTestGeneration) resetMotorVisuals()
     }, 1400)
   }, 300)
 }
@@ -2926,6 +2953,10 @@ watch(() => assemblyStore.activeAircraftId, () => {
 
 watch(bridgeMode, (next, previous) => {
   if (next !== previous) {
+    rcLoadGeneration += 1
+    safetyLoadGeneration += 1
+    rcBusy.value = false
+    safetyBusy.value = false
     invalidatePreflightPermit()
     sensorVerificationPassed.value = false
     rcVerificationPassed.value = false
@@ -2963,6 +2994,7 @@ onMounted(async () => {
   restorePreflightVerification(preflightSnapshot.value)
   timer = window.setInterval(() => { clockTick.value += 1 }, 100)
   px4PollTimer = window.setInterval(() => { void pollPx4() }, 300)
+  window.addEventListener('blur', releaseActiveVirtualStick)
   appendLog('进入动力系统调试', '优先探测真实 PX4 Bridge；未连接时保留教学模拟。', 'info')
   if (scenario.value === 'mapping') {
     appendLog('载入电机映射故障', '仅在教学模拟模式将 M1 指令映射到 M3', 'warn')
@@ -2974,7 +3006,10 @@ onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer)
   if (px4PollTimer) window.clearInterval(px4PollTimer)
   if (stopTimer) window.clearTimeout(stopTimer)
+  if (mappingRepairTimer) window.clearTimeout(mappingRepairTimer)
   if (trainingSyncTimer) window.clearTimeout(trainingSyncTimer)
+  window.removeEventListener('blur', releaseActiveVirtualStick)
+  activeVirtualStick = null
 })
 </script>
 
@@ -3155,6 +3190,7 @@ td:first-child { color:#45baff;font-weight:800; }
 
 .rc-workbench{display:grid;gap:12px}.rc-summary-surface{overflow:hidden}.rc-summary-main{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:16px;align-items:center;padding:15px 16px 12px}.rc-kicker{display:block;color:#55c8ff;font-size:7px;font-weight:800;letter-spacing:.16em;margin-bottom:5px}.rc-summary-main h2{margin:0;color:#e2f2ff;font-size:18px}.rc-summary-main p{max-width:760px;margin:6px 0 0;color:#7392ad;font-size:8px;line-height:1.65}.rc-summary-score{min-height:78px;display:grid;place-items:center;align-content:center;border:1px solid rgba(54,177,246,.26);border-radius:9px;background:linear-gradient(135deg,rgba(21,111,165,.16),rgba(8,32,49,.46));box-shadow:inset 0 0 24px rgba(34,146,215,.06)}.rc-summary-score small{color:#7597b1;font-size:8px}.rc-summary-score b{color:#67e4a4;font-size:27px;line-height:1}.rc-summary-score b.warn{color:#efbd54}.rc-summary-score em{font-size:10px;font-style:normal;color:#7898af;margin-left:2px}.rc-summary-strip{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid rgba(88,142,184,.14);background:rgba(4,18,30,.34)}.rc-summary-strip>div{min-height:55px;display:grid;align-content:center;gap:4px;padding:8px 12px;border-right:1px solid rgba(88,142,184,.11)}.rc-summary-strip>div:last-child{border-right:0}.rc-summary-strip span{color:#6c8aa4;font-size:7px}.rc-summary-strip b{color:#d2e9f8;font-size:10px}.rc-summary-strip b.ok{color:#5ce098}.rc-summary-strip b.warn{color:#f0bf58}.rc-summary-strip b.bad{color:#ff7770}.rc-no-input-banner{display:flex;align-items:center;gap:10px;margin:0 12px 12px;padding:9px 10px;border:1px solid rgba(241,183,74,.26);border-radius:7px;background:rgba(126,90,26,.12)}.rc-no-input-banner>span{width:25px;height:25px;display:grid;place-items:center;border-radius:50%;background:#b88932;color:#fff;font-weight:900}.rc-no-input-banner>div{display:grid;gap:2px}.rc-no-input-banner b{color:#e5c16f;font-size:9px}.rc-no-input-banner small{color:#8f815f;font-size:7px;line-height:1.45}
 .rc-top-grid{display:grid;grid-template-columns:minmax(470px,1.2fr) minmax(280px,.8fr);gap:12px}.rc-stick-surface,.rc-channel-surface,.rc-mapping-surface,.rc-calibration-surface,.rc-failsafe-surface{overflow:hidden}.rc-source-actions{display:flex;gap:5px}.rc-source-actions button{min-height:25px;padding:0 9px;border:1px solid rgba(85,145,190,.22);border-radius:5px;background:#0a2236;color:#7898b1;font-size:7px;cursor:pointer}.rc-source-actions button.active{border-color:#28a9f8;background:rgba(21,116,176,.24);color:#78d2ff}.rc-source-actions button:disabled{opacity:.35;cursor:not-allowed}.virtual-transmitter{position:relative;margin:12px;border:1px solid rgba(112,154,183,.32);border-radius:18px 18px 26px 26px;background:linear-gradient(145deg,#152c3c,#091927 60%,#122b3d);box-shadow:inset 0 1px rgba(255,255,255,.05),0 10px 22px rgba(0,0,0,.24);overflow:hidden}.virtual-transmitter.disabled{opacity:.72}.transmitter-topline{height:32px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid rgba(114,162,194,.13);color:#7696ac;font-size:7px;letter-spacing:.08em}.transmitter-topline span{display:flex;align-items:center;gap:5px}.transmitter-topline i{width:5px;height:5px;border-radius:50%;background:#43d58b;box-shadow:0 0 7px rgba(67,213,139,.65)}.transmitter-topline b{padding:3px 8px;border-radius:4px;background:#061522;color:#67cbfa;font-size:7px}.transmitter-switches{height:22px;display:flex;align-items:center;justify-content:center;gap:24px;color:#516f84;font-size:6px}.transmitter-switches i{position:relative;width:5px;height:14px;border-radius:3px;background:#7890a0;transform:rotate(12deg);box-shadow:0 0 0 3px #081724}.transmitter-switches i:nth-of-type(even){transform:rotate(-12deg)}.rc-stick-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;padding:0 24px 13px}.stick-card{display:grid;gap:8px}.stick-title{display:flex;justify-content:space-between;align-items:center}.stick-title b{font-size:9px;color:#cfe8f7}.stick-title small{font-size:7px;color:#6686a0}.stick-pad{position:relative;height:172px;border:6px solid #0a1823;border-radius:50%;overflow:hidden;touch-action:none;cursor:grab;background:radial-gradient(circle at 50% 50%,rgba(40,147,212,.12),transparent 45%),linear-gradient(180deg,#071b2b,#061624);box-shadow:inset 0 0 28px rgba(0,0,0,.35),0 0 0 1px rgba(91,158,199,.25)}.stick-pad:active{cursor:grabbing}.virtual-transmitter.disabled .stick-pad{cursor:default}.stick-pad:before,.stick-pad:after{content:"";position:absolute;border:1px solid rgba(65,126,170,.14);border-radius:50%;left:18%;right:18%;top:18%;bottom:18%}.stick-pad:after{left:34%;right:34%;top:34%;bottom:34%}.stick-axis{position:absolute;background:rgba(77,157,210,.2)}.stick-axis.horizontal{left:9%;right:9%;top:50%;height:1px}.stick-axis.vertical{top:9%;bottom:9%;left:50%;width:1px}.stick-dot{position:absolute;width:20px;height:20px;border-radius:50%;transform:translate(-50%,-50%);background:#33b9ff;border:4px solid rgba(216,245,255,.85);box-shadow:0 0 18px rgba(49,188,255,.72);transition:left .05s linear,top .05s linear;pointer-events:none}.stick-top,.stick-bottom{position:absolute;left:12px;color:#7594ac;font-size:7px;pointer-events:none}.stick-top{top:10px}.stick-bottom{bottom:10px}.transmitter-footer{min-height:36px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 16px 4px}.transmitter-footer small{color:#7593a8;font-size:7px}.transmitter-footer button{min-height:26px;padding:0 10px;border:1px solid rgba(55,166,235,.3);border-radius:5px;background:#0d2c44;color:#a9d7ef;font-size:7px;cursor:pointer}.virtual-rc-controls{padding:0 12px 12px}.virtual-rc-controls details{border:1px solid rgba(77,145,190,.15);border-radius:6px;background:rgba(5,20,32,.4)}.virtual-rc-controls summary{padding:8px 10px;color:#7898af;font-size:7px;cursor:pointer}.virtual-rc-controls label{display:grid;grid-template-columns:50px 1fr 68px;gap:8px;align-items:center;min-height:28px;padding:0 10px}.virtual-rc-controls label span{color:#7997af;font-size:8px}.virtual-rc-controls label b{color:#b9d8e9;font-size:8px;text-align:right}.virtual-rc-controls input[type=range]{width:100%;accent-color:#2fb4ff}.rc-manual-note{display:flex;gap:8px;align-items:flex-start;margin:0 12px 12px;padding:8px 9px;border:1px solid rgba(77,175,235,.18);border-radius:6px;background:rgba(19,79,116,.1)}.rc-manual-note b{color:#52c8ff;font-size:8px;white-space:nowrap}.rc-manual-note span{color:#7593aa;font-size:7px;line-height:1.5}
+.virtual-transmitter{aspect-ratio:960/880;border-radius:15px;background:#d9d9d9}.transmitter-photo{position:absolute;z-index:0;inset:0;width:100%;height:100%;object-fit:cover;user-select:none;pointer-events:none}.virtual-transmitter::after{content:"";position:absolute;z-index:1;inset:0;background:linear-gradient(180deg,rgba(3,15,24,.28),transparent 19%,transparent 72%,rgba(3,15,24,.72));pointer-events:none}.transmitter-topline{position:absolute;z-index:4;top:7px;left:9px;right:9px;height:29px;border:1px solid rgba(164,211,238,.24);border-radius:7px;background:rgba(5,20,31,.78);color:#a9c8db;backdrop-filter:blur(4px)}.transmitter-topline b{background:rgba(3,15,24,.82)}.rc-stick-grid{position:absolute;z-index:3;inset:0;display:block;padding:0}.stick-card{position:absolute;top:43.5%;width:22%;aspect-ratio:1}.stick-card:first-child{left:29%}.stick-card:last-child{left:62.5%}.stick-title{display:none}.stick-pad{width:100%;height:auto;aspect-ratio:1;border:3px solid rgba(122,211,255,.55);background:radial-gradient(circle,rgba(5,19,29,.68) 0 38%,rgba(5,19,29,.38) 57%,rgba(28,139,203,.12) 72%,rgba(5,19,29,.28) 73%);box-shadow:inset 0 0 22px rgba(0,0,0,.42),0 0 0 2px rgba(5,20,31,.5),0 0 16px rgba(45,177,240,.18)}.stick-pad:before,.stick-pad:after{border-color:rgba(109,201,249,.2)}.stick-axis{background:rgba(111,205,250,.3)}.stick-top,.stick-bottom{left:50%;transform:translateX(-50%);padding:2px 5px;border-radius:4px;background:rgba(4,17,27,.66);color:#b7dcee;white-space:nowrap}.stick-top{top:5px}.stick-bottom{bottom:5px}.transmitter-footer{position:absolute;z-index:4;left:5%;right:5%;bottom:5.5%;min-height:34px;padding:4px 8px;border:1px solid rgba(154,203,231,.2);border-radius:7px;background:rgba(4,18,29,.76);backdrop-filter:blur(4px)}.transmitter-footer small{color:#bdd8e8}.transmitter-credit{position:absolute;z-index:4;right:8px;bottom:5px;color:rgba(221,236,244,.72);font-size:5px;text-decoration:none}.transmitter-credit:hover{color:#fff;text-decoration:underline}
 .rc-channel-list{display:grid;gap:5px;padding:10px 12px 12px;max-height:330px;overflow:auto}.rc-channel-row{display:grid;grid-template-columns:62px 1fr 62px;gap:8px;align-items:center;min-height:29px}.rc-channel-name{display:grid;grid-template-columns:28px 1fr;align-items:center;gap:4px}.rc-channel-name b{font-size:8px;color:#cce5f5}.rc-channel-name small{font-size:6px;color:#67859e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rc-channel-bar{position:relative;height:8px;border-radius:999px;background:#071725;border:1px solid rgba(80,132,170,.2);overflow:hidden}.rc-channel-bar i{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#176c9f,#31b9ff);box-shadow:0 0 8px rgba(49,185,255,.28)}.rc-channel-bar .center-mark{position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:rgba(255,255,255,.32)}.rc-channel-row strong{color:#a8cce1;font-size:8px;text-align:right;font-variant-numeric:tabular-nums}
 .rc-config-grid{display:grid;grid-template-columns:minmax(620px,1.4fr) minmax(310px,.8fr);gap:12px}.rc-param-compat-note{display:flex;gap:8px;align-items:flex-start;margin:10px 10px 0;padding:8px 9px;border:1px solid rgba(56,163,229,.2);border-radius:6px;background:rgba(19,86,126,.09)}.rc-param-compat-note b{color:#5dccff;font-size:7px;white-space:nowrap}.rc-param-compat-note span{color:#708ea6;font-size:7px;line-height:1.5}.rc-role-table{padding:10px}.rc-role-head,.rc-role-row{display:grid;grid-template-columns:1.35fr .7fr .72fr .72fr .72fr .72fr .72fr 1fr;gap:6px;align-items:center}.rc-role-head{min-height:26px;padding:0 6px;color:#66859d;font-size:7px;border-bottom:1px solid rgba(79,130,169,.13)}.rc-role-row{min-height:54px;padding:7px 6px;border-bottom:1px solid rgba(76,128,165,.1)}.rc-role-row>div:first-child{display:grid;gap:2px;min-width:0}.rc-role-row>div:first-child b{font-size:8px;color:#d0e7f6}.rc-role-row code{color:#57bfea;font-size:6px;background:transparent}.rc-role-row input,.rc-role-row select{width:100%;min-width:0;height:29px;border:1px solid rgba(87,138,177,.25);border-radius:5px;background:#071a2a;color:#c7e0ef;padding:0 6px;font-size:7px;outline:none}.rc-role-row input:focus,.rc-role-row select:focus{border-color:#2eaff9}.rc-normalized{position:relative;height:29px;display:flex;align-items:center;justify-content:center;border:1px solid rgba(79,135,176,.2);border-radius:5px;background:#061725;overflow:hidden}.rc-normalized i{position:absolute;left:0;top:0;bottom:0;background:rgba(35,166,236,.17);border-right:1px solid rgba(58,194,255,.45)}.rc-normalized b{position:relative;z-index:1;color:#acd8ed;font-size:7px}
 .rc-check-pill{padding:4px 8px;border-radius:999px;font-size:7px;font-weight:700}.rc-check-pill.ok{color:#5ce19a;border:1px solid rgba(66,218,132,.28);background:rgba(35,121,75,.13)}.rc-check-pill.warn{color:#f0bd57;border:1px solid rgba(240,189,87,.28);background:rgba(124,91,31,.12)}.rc-capture-panel{display:grid;gap:9px;padding:11px 12px;border-bottom:1px solid rgba(83,137,177,.13)}.capture-copy{display:grid;gap:3px}.capture-copy b{color:#d1e8f6;font-size:9px}.capture-copy small{color:#6f8da5;font-size:7px;line-height:1.5}.capture-actions{display:flex;gap:6px}.capture-actions button,.rc-actions button,.link-safety-button{min-height:29px;border:1px solid rgba(62,157,219,.28);border-radius:5px;background:#0b2a42;color:#a9d6ef;padding:0 9px;font-size:7px;cursor:pointer}.capture-actions button:hover:not(:disabled),.rc-actions button:hover:not(:disabled),.link-safety-button:hover{border-color:#2eb2fb;background:#104b70;color:#fff}.capture-actions button:disabled,.rc-actions button:disabled{opacity:.36;cursor:not-allowed}.capture-actions .capture-stop{border-color:rgba(242,179,70,.32);background:rgba(118,83,22,.2);color:#e8c16f}.capture-ranges{display:grid;grid-template-columns:1fr 1fr;gap:6px}.capture-ranges>div{display:flex;justify-content:space-between;gap:8px;padding:7px 8px;border:1px solid rgba(81,132,169,.14);border-radius:5px;background:rgba(6,23,37,.52)}.capture-ranges span{color:#6f8ca4;font-size:7px}.capture-ranges b{color:#b9d5e7;font-size:7px}.rc-issue-list{display:grid;gap:6px;padding:10px 12px}.rc-no-issues,.rc-issue{display:flex;gap:8px;align-items:center;min-height:43px;padding:7px 8px;border-radius:6px}.rc-no-issues{border:1px solid rgba(66,213,130,.2);background:rgba(32,117,71,.1)}.rc-no-issues>span,.rc-issue>span{width:22px;height:22px;display:grid;place-items:center;border-radius:50%;font-weight:900}.rc-no-issues>span{background:#34b46e;color:#fff}.rc-no-issues>div,.rc-issue>div{display:grid;gap:2px}.rc-no-issues b{color:#65df9a;font-size:8px}.rc-no-issues small,.rc-issue small{color:#708ca3;font-size:7px;line-height:1.45}.rc-issue{border:1px solid rgba(239,184,73,.24);background:rgba(122,89,27,.1)}.rc-issue.error{border-color:rgba(255,88,78,.3);background:rgba(124,35,31,.13)}.rc-issue>span{background:#bd8f35;color:white}.rc-issue.error>span{background:#d04b44}.rc-issue b{color:#eac574;font-size:8px}.rc-issue.error b{color:#ff9189}.rc-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;padding:0 12px 11px}.rc-actions .primary-action{border-color:#2facf3;background:#0d6c9e;color:#fff}.rc-actions .verify-action{border-color:rgba(78,213,140,.3);background:rgba(28,108,66,.22);color:#80e4ab}.rc-message{margin:0 12px 12px;padding:8px 9px;border-radius:6px;font-size:7px;line-height:1.5}.rc-message.info{border:1px solid rgba(65,156,216,.24);background:rgba(24,89,129,.11);color:#88c7ec}.rc-message.success{border:1px solid rgba(67,212,132,.24);background:rgba(31,119,72,.11);color:#72dfa0}.rc-message.warn{border:1px solid rgba(239,184,77,.26);background:rgba(122,88,29,.11);color:#e9c675}.rc-message.error{border:1px solid rgba(255,91,81,.28);background:rgba(124,35,31,.14);color:#ff9992}

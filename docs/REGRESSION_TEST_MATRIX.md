@@ -10,7 +10,7 @@
 | 任务导航 | 装—调—检—修—验入口可达；不把“经过页面”误标为完成 | `learning-guide-v1.test.ts`、`learning-shell-regression.test.ts` |
 | 训练上下文 | 从任务进入后，装配、调试、飞行、复盘始终属于同一训练记录 | `training-context.test.ts` |
 | 传感器调试 | 状态读取、校准门禁、故障案例和日志正常 | `debug-sensors.test.ts`、`debug-scenarios.test.ts` |
-| 遥控调试 | Mode 2 双摇杆可拖动；右杆及偏航松手回中、油门保持；通道映射、校准和上锁门禁正常 | `rc-system.test.ts`、`virtual-rc.test.ts`、`P0-UI-017` |
+| 遥控调试 | 真实遥控器底图与交互热区对齐；Mode 2 双摇杆可拖动；右杆及偏航在松手、失焦时回中，油门保持；通道映射、校准和上锁门禁正常 | `rc-system.test.ts`、`virtual-rc.test.ts`、`P0-UI-017` |
 | 动力系统 | 飞机固定在地面；仅测试桨叶转动；“全部停止”立即停转；解锁时禁止测试 | `debug-motor-ground.test.ts`、`test_px4_bridge_optional_dependency.py` |
 | 安全与参数 | 参数修改有校验，危险状态禁止写入 | `debug-safety-parameters.test.ts`、`debug-parameter-validation.test.ts` |
 | 起飞前检查 | 六项门禁、许可有效期及飞机配置指纹正确 | `preflight*.test.ts`、`flight-control-guards.test.ts` |

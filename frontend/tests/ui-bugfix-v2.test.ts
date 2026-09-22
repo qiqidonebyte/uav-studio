@@ -31,7 +31,16 @@ describe('UI Bugfix V2 regression contracts', () => {
     expect(teacher).toContain('runRequestGeneration')
     expect(teacher).toContain('studentRequestGeneration')
     expect(teacher).toContain('detailRequestGeneration')
+    expect(teacher).toContain('gradeRequestGeneration')
+    expect(teacher).toContain('const classId = gradeClassId.value')
     expect(teacher.match(/catch \(caught\) \{ showNotice\(apiError\(caught\)\) \}/g)?.length ?? 0).toBeGreaterThanOrEqual(7)
+  })
+
+  it('discards parameter reads started for an obsolete PX4 bridge mode', () => {
+    const debugging = source('../src/views/Debugging.vue')
+    expect(debugging).toContain('rcLoadGeneration')
+    expect(debugging).toContain('safetyLoadGeneration')
+    expect(debugging).toContain('bridgeMode.value !== requestedMode')
   })
 
   it('keeps top navigation reachable on narrower classroom screens', () => {

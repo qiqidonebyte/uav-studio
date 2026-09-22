@@ -44,5 +44,8 @@ describe('RC system workbench', () => {
     expect(source).toContain('左摇杆油门松手保持')
     expect(source).toContain('<details>')
     expect(source).toContain("setVirtualRolePwm('throttle', 1000)")
+    expect(source).toContain('rc-transmitter-frsky-x9d.jpg')
+    expect(source).toContain('@lostpointercapture="releaseVirtualStick')
+    expect(source).toContain("window.addEventListener('blur', releaseActiveVirtualStick)")
   })
 })

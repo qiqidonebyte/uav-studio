@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterator
 
@@ -46,6 +47,8 @@ class SessionView(StrictModel):
 
 
 _QUEUE_LOCK = threading.RLock()
+_POLL_PROMOTION_INTERVAL_S = 1.0
+_last_poll_promotion_at = 0.0
 
 
 def utc_now() -> datetime:
@@ -198,6 +201,17 @@ def _promote_queue(session: Session) -> None:
             session.commit()
 
 
+def _promote_queue_from_poll(session: Session) -> None:
+    """Coalesce high-frequency student polling into one queue pass per second."""
+    global _last_poll_promotion_at
+    with _QUEUE_LOCK:
+        now = time.monotonic()
+        if now - _last_poll_promotion_at < _POLL_PROMOTION_INTERVAL_S:
+            return
+        _last_poll_promotion_at = now
+        _promote_queue(session)
+
+
 def _touch_row(session: Session, row: PX4SessionRecord, *, force: bool = False) -> None:
     # FlightLab polls telemetry at 10 Hz. Persisting last_seen on every frame would
     # create needless SQLite write pressure, so runtime heartbeat stays in memory
@@ -212,7 +226,10 @@ def _touch_row(session: Session, row: PX4SessionRecord, *, force: bool = False) 
 
 def _sync_runtime_status(session: Session, row: PX4SessionRecord) -> tuple[PX4SessionRecord, Px4Slot | None, dict[str, Any]]:
     if row.status == "queued":
-        _promote_queue(session)
+        # Polling is activity: keep an actively waiting student in FIFO and do
+        # not run a full database sweep for every 100-300 ms telemetry request.
+        _touch_row(session, row)
+        _promote_queue_from_poll(session)
         session.refresh(row)
     if row.slot_id is None:
         pos = _queue_position(session, row)
