@@ -291,6 +291,8 @@ let animationId = 0
 let previousAnimationTime = performance.now()
 let lastTelemetryTime = -1
 let rebuildGeneration = 0
+let groundedRestOffsetReady = false
+const groundedRestOffset = new THREE.Vector3()
 const raycaster = new THREE.Raycaster()
 const pointer = new THREE.Vector2()
 const cameraTargetState = new THREE.Vector3(0, 0.08, 0)
@@ -564,6 +566,8 @@ function syncVisualTestProbe(): void {
     mounts: aircraftRenderer.motorMountsSnapshot(),
     assemblyViewMode: assemblyViewMode.value,
     explosionProgress: explosionProgress.value,
+    grounded: props.grounded,
+    groundedRestOffset: groundedRestOffset.toArray(),
     directionLabelsVisible: directionLabelsVisible.value,
     explodedParts: aircraftRenderer.explodedPartsSnapshot(),
     explodedLabels: explodedComponentLabels.value.map(label => ({
@@ -615,6 +619,7 @@ async function rebuildAircraftAssets(): Promise<void> {
     buildOverlay()
     updateExplodedComponentLabels()
     applyAssemblyState()
+    recomputeGroundedRestOffset()
     startInstallationAnimationIfNeeded()
     updateMountHotspots()
     fitAircraftToView()
@@ -774,12 +779,32 @@ function addTrajectoryPoint(point: THREE.Vector3): void {
   }
 }
 
-function restAircraftOnGround(): THREE.Vector3 {
+function recomputeGroundedRestOffset(): void {
+  if (!props.grounded || !vehicleGroup || !aircraftRenderer) {
+    groundedRestOffset.set(0, 0, 0)
+    groundedRestOffsetReady = true
+    return
+  }
+
+  const savedPosition = vehicleGroup.position.clone()
+  const savedQuaternion = vehicleGroup.quaternion.clone()
+  vehicleGroup.position.set(0, 0, 0)
+  vehicleGroup.quaternion.identity()
+  vehicleGroup.updateMatrixWorld(true)
   const bounds = new THREE.Box3().setFromObject(aircraftRenderer.root)
   const lowestPoint = Number.isFinite(bounds.min.y) ? bounds.min.y : -0.15
   // The scene ground is y=-0.16. A 5 mm visual clearance avoids mesh flicker
   // while keeping the lowest point of the aircraft visibly on the floor.
-  return new THREE.Vector3(0, -0.155 - lowestPoint, 0)
+  groundedRestOffset.set(0, -0.155 - lowestPoint, 0)
+  vehicleGroup.position.copy(savedPosition)
+  vehicleGroup.quaternion.copy(savedQuaternion)
+  vehicleGroup.updateMatrixWorld(true)
+  groundedRestOffsetReady = true
+}
+
+function restAircraftOnGround(): THREE.Vector3 {
+  if (!groundedRestOffsetReady) recomputeGroundedRestOffset()
+  return groundedRestOffset.clone()
 }
 
 function ingestTelemetryFrame(frame: TelemetryFrame): void {
