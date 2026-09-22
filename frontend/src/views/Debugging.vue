@@ -831,13 +831,14 @@
 
       <section class="surface bridge-surface">
         <div class="bridge-row">
-          <span class="dot" :class="bridgeMode === 'live' ? 'online' : 'demo'"></span>
+          <span class="dot" :class="bridgeMode === 'live' ? 'online' : px4Queued ? 'queued' : 'demo'"></span>
           <div><b>PX4 SIH</b><small>{{ bridgeDetailText }}</small></div>
-          <strong>{{ bridgeMode === 'live' ? '已连接' : '等待' }}</strong>
+          <strong>{{ bridgeMode === 'live' ? px4SessionView.statusText : px4Queued ? px4SessionView.statusText : '等待' }}</strong>
         </div>
-        <div v-if="bridgeError" class="bridge-error">{{ bridgeError }}</div>
+        <div v-if="px4Queued" class="bridge-queue" data-testid="px4-debug-queue">{{ px4SessionView.detail }}</div>
+        <div v-else-if="bridgeError" class="bridge-error">{{ bridgeError }}</div>
         <div class="bridge-controls">
-          <button :disabled="bridgeBusy" @click="connectPx4">连接 PX4</button>
+          <button :disabled="bridgeBusy" @click="connectPx4">{{ px4Queued ? '刷新排队状态' : '连接 PX4' }}</button>
           <button :disabled="bridgeBusy || bridgeMode !== 'live'" @click="runPrearmPx4">Pre-Arm</button>
           <button :disabled="bridgeBusy || bridgeMode !== 'live' || px4Armed" @click="armPx4">解锁</button>
           <button :disabled="bridgeBusy || bridgeMode !== 'live' || !px4Armed" @click="disarmPx4">上锁</button>
@@ -947,6 +948,7 @@ import { calculateDebugScore, resolveMotorResponse, type DebugScenario } from '.
 import { calculateSafetyScore, recommendedSafetyProfile, safetyParamKeys, unsafeDemoSafetyProfile, validateSafetyDraft, type SafetyDraft, type SafetyParamKey } from '../utils/safety'
 import { calculateRcScore, cloneRcDraft, defaultRcDraft, flattenRcDraft, normalizeRcInput, rcMapParams, rcRoleLabels, rcRoles, validateRcDraft, type RcDraft, type RcRole } from '../utils/rc'
 import { aircraftFingerprint, clearPreflightSnapshot, loadPreflightSnapshot, preflightScore, savePreflightSnapshot, type PreflightCheckRecord, type PreflightSnapshot } from '../utils/preflight'
+import { px4SessionPresentation } from '../utils/px4Session'
 import { loadFaultTrainingCases, scoreFaultTraining, trainingCategoryText, trainingDifficultyText, type FaultTrainingCase, type TrainingCategory, type TrainingEvaluation } from '../utils/training'
 
 type SectionKey = 'sensors' | 'rc' | 'power' | 'safety' | 'preflight'
@@ -1163,6 +1165,8 @@ const escMarginText = computed(() => !engineering.value ? '待计算' : engineer
 const batteryHealthText = computed(() => !engineering.value ? '待计算' : engineering.value.battery_continuous_margin_a >= 0 ? '良好' : '风险')
 
 const px4Armed = computed(() => bridgeMode.value === 'live' ? Boolean(liveTelemetry.value?.armed) : false)
+const px4SessionView = computed(() => px4SessionPresentation(liveTelemetry.value))
+const px4Queued = computed(() => Boolean(assignedRunId.value) && px4SessionView.value.tone === 'queued')
 const px4ModeText = computed(() => bridgeMode.value === 'live' ? (liveTelemetry.value?.mode || 'UNKNOWN') : 'STANDBY')
 const liveAltitudeText = computed(() => {
   const z = liveTelemetry.value?.local_position.z
@@ -1193,6 +1197,7 @@ const ekfText = computed(() => {
   return liveTelemetry.value.estimator.ok ? '正常' : '异常'
 })
 const bridgeDetailText = computed(() => {
+  if (px4Queued.value) return px4SessionView.value.detail
   if (bridgeMode.value === 'live') {
     const age = liveTelemetry.value?.heartbeat_age_s
     return `MAVLink 已连接 · ${liveTelemetry.value?.connection_url ?? '14540'}${typeof age === 'number' ? ` · HB ${age.toFixed(1)}s` : ''}`
@@ -3065,6 +3070,7 @@ td:first-child { color:#45baff;font-weight:800; }
 .prearm-alert.passed { border-color:rgba(69,218,135,.32);background:rgba(34,121,74,.14); }.prearm-alert.passed > span { background:#35b86f; }.prearm-alert.passed b { color:#65e59b; }.prearm-alert.passed small { color:#79a990; }
 .bridge-surface { padding:5px 10px; }
 .bridge-error { margin:7px 0 4px;padding:7px 8px;border:1px solid rgba(255,102,91,.3);border-radius:6px;background:rgba(119,38,34,.18);color:#ff9c95;font-size:8px;line-height:1.45; }
+.bridge-queue { margin:7px 0 4px;padding:8px;border:1px solid rgba(76,157,231,.32);border-radius:6px;background:rgba(32,99,158,.18);color:#b9dcff;font-size:9px;line-height:1.5; }
 .bridge-controls { display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:7px 0 8px;border-top:1px solid rgba(89,138,178,.12); }
 .bridge-controls button,.param-actions button { min-height:30px;border:1px solid rgba(66,158,219,.32);border-radius:5px;background:#0e2b43;color:#a9d7f3;font-size:8px;cursor:pointer; }
 .bridge-controls button:hover:not(:disabled),.param-actions button:hover:not(:disabled){border-color:#2aaeff;background:#124a70;color:white}.bridge-controls button:disabled,.param-actions button:disabled{opacity:.38;cursor:not-allowed}
@@ -3076,7 +3082,7 @@ td:first-child { color:#45baff;font-weight:800; }
 .param-tool > small { display:block;margin-top:6px;color:#86a8c4;font-size:7px;line-height:1.4;word-break:break-all; }
 .bridge-row.secondary { opacity:.65; }
 
-.bridge-row { display:grid;grid-template-columns:12px 1fr auto;align-items:center;gap:8px;padding:8px 2px; }.bridge-row + .bridge-row { border-top:1px solid rgba(89,138,178,.12); }.bridge-row .dot { width:7px;height:7px;border-radius:50%; }.dot.online { background:#43df84;box-shadow:0 0 10px #43df84; }.dot.demo { background:#e6b64d;box-shadow:0 0 8px rgba(230,182,77,.4); }.bridge-row div { display:grid;gap:1px; }.bridge-row b { font-size:9px; }.bridge-row small { color:#6e8da9;font-size:7px; }.bridge-row strong { color:#87a4bc;font-size:8px; }
+.bridge-row { display:grid;grid-template-columns:12px 1fr auto;align-items:center;gap:8px;padding:8px 2px; }.bridge-row + .bridge-row { border-top:1px solid rgba(89,138,178,.12); }.bridge-row .dot { width:7px;height:7px;border-radius:50%; }.dot.online { background:#43df84;box-shadow:0 0 10px #43df84; }.dot.queued { background:#48a8ff;box-shadow:0 0 10px rgba(72,168,255,.7); }.dot.demo { background:#e6b64d;box-shadow:0 0 8px rgba(230,182,77,.4); }.bridge-row div { display:grid;gap:1px; }.bridge-row b { font-size:9px; }.bridge-row small { color:#6e8da9;font-size:7px; }.bridge-row strong { color:#87a4bc;font-size:8px; }
 .log-surface { flex:1;min-height:270px; }.clear-log { border:0;background:transparent;color:#6686a1;font-size:7px;cursor:pointer; }
 .timeline { padding:8px 10px 12px;max-height:330px;overflow:auto; }.log-item { position:relative;display:grid;grid-template-columns:58px 1fr;gap:7px;padding:7px 3px 7px 18px;border-left:1px solid rgba(57,132,185,.34);margin-left:4px; }.timeline-dot { position:absolute;left:-4px;top:14px;width:7px;height:7px;border-radius:50%;background:#268ddd;box-shadow:0 0 8px rgba(38,141,221,.5); }.log-item.error .timeline-dot { background:#ff4f48; }.log-item.success .timeline-dot { background:#46d985; }.log-item.warn .timeline-dot { background:#ecb84f; }.log-item time { color:#809cb4;font-size:8px; }.log-item div { display:grid;gap:2px; }.log-item b { font-size:9px; }.log-item small { color:#6e8ba4;font-size:7px;line-height:1.4; }.empty-log { color:#597892;text-align:center;padding:30px 0;font-size:9px; }
 .score-surface { display:grid;grid-template-columns:40px 112px 1fr;align-items:center;padding:12px; }.trophy { color:#f3c443;font-size:27px; }.score-surface > div { display:grid; }.score-surface small { color:#8aa4bb;font-size:8px; }.score-surface b { font-size:28px;color:#ffd163;line-height:1; }.score-surface b em { font-size:12px;color:#92aabe;font-style:normal;margin-left:3px; }.remaining { padding-left:12px;border-left:1px solid rgba(94,141,178,.18); }.remaining span { color:#7894ad;font-size:8px; }.remaining b { color:#94aec4;font-size:9px;line-height:1.4;margin-top:3px; }

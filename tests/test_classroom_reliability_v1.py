@@ -153,6 +153,46 @@ def test_release_promotes_first_waiting_run(tmp_path, monkeypatch):
         assert promoted.status in {"starting", "ready", "active"}
 
 
+def test_telemetry_keeps_queue_and_starting_slot_state(tmp_path, monkeypatch):
+    fake_px4(monkeypatch)
+    client, _, _ = build_client(tmp_path)
+
+    for index in range(13):
+        response = client.post(
+            f"/api/training/runs/{1000 + index}/px4/session",
+            headers=headers(100 + index),
+        )
+        assert response.status_code == 200
+
+    queued = client.get("/api/training/runs/1012/px4/telemetry", headers=headers(112)).json()
+    assert queued["session_status"] == "queued"
+    assert queued["queue_position"] == 1
+    assert queued["slot_id"] is None
+
+    # A slot can be allocated before its process emits the first Heartbeat. The
+    # telemetry placeholder must preserve that assignment for the student UI.
+    monkeypatch.setattr(session_manager, "runtime_status", lambda slot: {
+        "dependency_available": True,
+        "running": True,
+        "connected": False,
+        "connection_url": slot.connection_url,
+        "heartbeat_age_s": None,
+        "system_id": None,
+        "component_id": None,
+        "mode": "WAITING",
+        "armed": False,
+        "last_error": f"Slot {slot.slot_id} 等待 PX4 Heartbeat",
+        "uptime_s": 0.2,
+        "slot_id": slot.slot_id,
+        "slot_port": slot.port,
+        "run_id": slot.run_id,
+    })
+    starting = client.get("/api/training/runs/1000/px4/telemetry", headers=headers(100)).json()
+    assert starting["session_status"] == "starting"
+    assert starting["slot_id"] == 1
+    assert starting["queue_position"] == 0
+
+
 def test_student_cannot_operate_another_students_slot(tmp_path, monkeypatch):
     fake_px4(monkeypatch)
     client, _, _ = build_client(tmp_path)

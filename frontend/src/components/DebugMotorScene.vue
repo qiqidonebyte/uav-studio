@@ -5,6 +5,7 @@
       :aircraft="aircraft"
       :components="components"
       :engineering="engineering"
+      grounded
     />
 
     <div class="motor-overlay" aria-hidden="true">
@@ -24,7 +25,7 @@
     </div>
 
     <div class="scene-caption">
-      <span>调试数据源：</span>
+      <span>地面动力测试 · 数据源：</span>
       <b>{{ live ? 'PX4 SIH / MAVLink' : '教学模拟' }}</b>
       <em>· {{ aircraft?.name || '当前飞机' }}</em>
     </div>

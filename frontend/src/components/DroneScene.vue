@@ -38,13 +38,18 @@
       <span>{{ assetError }}</span>
     </div>
 
-    <div v-if="telemetry" class="scene-readout">
+    <div v-if="telemetry && !grounded" class="scene-readout">
       <div><span>时间</span><b>{{ telemetry.t.toFixed(1) }} s</b></div>
       <div><span>高度</span><b>{{ telemetry.position.z.toFixed(1) }} m</b></div>
       <div><span>位置</span><b>({{ telemetry.position.x.toFixed(1) }}, {{ telemetry.position.y.toFixed(1) }}, {{ telemetry.position.z.toFixed(1) }}) m</b></div>
     </div>
 
-    <div v-if="telemetry" class="wind-readout">风场 {{ telemetry.wind.speed_mps.toFixed(1) }} m/s</div>
+    <div v-if="telemetry && grounded" class="scene-readout grounded-readout" data-testid="grounded-test-state">
+      <div><span>测试状态</span><b>地面固定</b></div>
+      <div><span>机体运动</span><b>已锁定</b></div>
+    </div>
+
+    <div v-if="telemetry && !grounded" class="wind-readout">风场 {{ telemetry.wind.speed_mps.toFixed(1) }} m/s</div>
 
     <div v-if="assemblyMode" :class="['scene-selection', { issue: issueSlots.length > 0 }]">
       <b>{{ assemblyViewMode === 'exploded' ? '爆炸视图' : (selectedSlot ? SLOT_LABELS[selectedSlot] : '选择部件') }}</b>
@@ -185,6 +190,7 @@ const props = withDefaults(
     installAnimation?: { mountId: string; serial: number } | null
     removeAnimation?: { mountId: string; serial: number } | null
     issueMountIds?: string[]
+    grounded?: boolean
   }>(),
   {
     telemetry: undefined,
@@ -200,6 +206,7 @@ const props = withDefaults(
     installAnimation: null,
     removeAnimation: null,
     issueMountIds: () => [],
+    grounded: false,
   },
 )
 
@@ -742,10 +749,10 @@ function applyAssemblyState(): void {
     hoveredMountId.value,
   )
   const display = settingsStore.settings.display_3d
-  thrustArrows.forEach(arrow => { arrow.visible = display.show_thrust_vectors && !assemblyMode.value })
-  if (gravityArrow) gravityArrow.visible = display.show_gravity_vector && !assemblyMode.value
-  if (windArrow) windArrow.visible = display.show_wind_vector && !assemblyMode.value
-  if (trajectoryLine) trajectoryLine.visible = display.show_trajectory && !assemblyMode.value
+  thrustArrows.forEach(arrow => { arrow.visible = display.show_thrust_vectors && !assemblyMode.value && !props.grounded })
+  if (gravityArrow) gravityArrow.visible = display.show_gravity_vector && !assemblyMode.value && !props.grounded
+  if (windArrow) windArrow.visible = display.show_wind_vector && !assemblyMode.value && !props.grounded
+  if (trajectoryLine) trajectoryLine.visible = display.show_trajectory && !assemblyMode.value && !props.grounded
 
   if (cgMarker) {
     cgMarker.visible = display.show_cg && (assemblyMode.value ? Boolean(props.engineering) : Boolean(props.telemetry))
@@ -767,9 +774,21 @@ function addTrajectoryPoint(point: THREE.Vector3): void {
   }
 }
 
+function restAircraftOnGround(): THREE.Vector3 {
+  const bounds = new THREE.Box3().setFromObject(aircraftRenderer.root)
+  const lowestPoint = Number.isFinite(bounds.min.y) ? bounds.min.y : -0.15
+  // The scene ground is y=-0.16. A 5 mm visual clearance avoids mesh flicker
+  // while keeping the lowest point of the aircraft visibly on the floor.
+  return new THREE.Vector3(0, -0.155 - lowestPoint, 0)
+}
+
 function ingestTelemetryFrame(frame: TelemetryFrame): void {
   if (!vehicleGroup || !overlayGroup) return
-  const pose = simulationPoseToThree(frame.position, frame.attitude)
+  const pose = simulationPoseToThree(
+    props.grounded ? { x: 0, y: 0, z: 0 } : frame.position,
+    props.grounded ? { roll: 0, pitch: 0, yaw: 0 } : frame.attitude,
+  )
+  if (props.grounded) pose.position.copy(restAircraftOnGround())
 
   if (frame.t < lastTelemetryTime) {
     trajectoryPoints = []
@@ -804,7 +823,7 @@ function ingestTelemetryFrame(frame: TelemetryFrame): void {
     flightSmoothing.initialized = true
   }
 
-  addTrajectoryPoint(pose.position.clone())
+  if (!props.grounded) addTrajectoryPoint(pose.position.clone())
 }
 
 function advanceSmoothedFlight(dt: number): void {
@@ -1352,6 +1371,7 @@ onBeforeUnmount(() => {
 .asset-toolbar button.scene-chip:hover {
   transform: translateY(-1px);
 }
+.grounded-readout b { color:#18794e; }
 .asset-error {
   position: absolute;
   z-index: 10;

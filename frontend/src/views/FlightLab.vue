@@ -14,11 +14,11 @@
           <span class="control-label">{{ px4Mode ? '数据源' : '仿真' }}</span>
 
           <template v-if="px4Mode">
-            <div class="source-banner" :class="{ live: px4Connected }">
+            <div class="source-banner" :class="[px4SessionView.tone, { live: px4Connected }]">
               <span class="source-dot"></span>
               <div>
-                <b>{{ px4Connected ? 'PX4 SIH · MAVLink' : 'PX4 SIH · 等待连接' }}</b>
-                <small>{{ px4ConnectionDetail }}</small>
+                <b>{{ px4SessionView.title }}</b>
+                <small>{{ px4SessionView.detail }}</small>
               </div>
             </div>
             <div class="button-grid">
@@ -28,7 +28,7 @@
                 :disabled="busy || !flightReady"
                 @click="performPx4(connectPx4)"
               >
-                {{ px4Connected ? '刷新连接' : '连接 PX4' }}
+                {{ px4Connected ? '刷新连接' : px4Queued ? '刷新排队状态' : '连接 PX4' }}
               </button>
               <button
                 :disabled="busy || !px4Connected"
@@ -38,8 +38,8 @@
               </button>
             </div>
             <div class="command-state">
-              <span>Heartbeat</span>
-              <b :class="px4Connected ? 'ok-text' : 'warn-text'">{{ heartbeatText }}</b>
+              <span>{{ px4Connected ? 'Heartbeat' : '课堂资源' }}</span>
+              <b :class="px4Connected ? 'ok-text' : 'warn-text'">{{ px4Connected ? heartbeatText : px4SessionView.statusText }}</b>
             </div>
           </template>
 
@@ -207,9 +207,9 @@
         <span>飞行实验要求先完成飞控传感器、遥控、动力、安全设置与 Pre-Arm 六项门禁。</span>
         <RouterLink to="/debugging">返回系统调试 / 起飞前检查</RouterLink>
       </div>
-      <div v-else-if="px4Mode && !px4Connected" class="stage-status-banner">
-        <b>正在等待 PX4 SIH Heartbeat</b>
-        <span>启动 PX4 SIH 与 Bridge 后，本页不会退回旧模拟器；连接成功后 Three.js 会直接跟随 PX4 遥测。</span>
+      <div v-else-if="px4Mode && !px4Connected" :class="['stage-status-banner', px4SessionView.tone]" data-testid="px4-session-status">
+        <b>{{ px4SessionView.title }}</b>
+        <span>{{ px4SessionView.detail }}</span>
       </div>
     </main>
 
@@ -219,6 +219,8 @@
       <section v-if="px4Mode" class="inspector-section px4-source-section">
         <h3>PX4 数据源</h3>
         <dl>
+          <div><dt>课堂资源</dt><dd>{{ px4SessionView.statusText }}</dd></div>
+          <div><dt>槽位</dt><dd>{{ px4SessionSource?.slot_id != null ? `#${px4SessionSource.slot_id}` : '—' }}</dd></div>
           <div><dt>System ID</dt><dd>{{ px4Telemetry?.system_id ?? '—' }}</dd></div>
           <div><dt>飞控模式</dt><dd>{{ px4Telemetry?.mode || '—' }}</dd></div>
           <div><dt>着陆状态</dt><dd>{{ landedText }}</dd></div>
@@ -300,7 +302,7 @@ import { useRoute } from 'vue-router'
 import DroneScene from '../components/DroneScene.vue'
 import LocalFlightMap from '../components/LocalFlightMap.vue'
 import RealtimeCharts from '../components/RealtimeCharts.vue'
-import { px4Api, type Px4CommandResult, type Px4Telemetry } from '../api/px4'
+import { px4Api, type Px4CommandResult, type Px4Status, type Px4Telemetry } from '../api/px4'
 import { studentTrainingApi } from '../api/teacher'
 import { useAssemblyStore } from '../stores/assembly'
 import { useSimulationStore } from '../stores/simulation'
@@ -309,6 +311,7 @@ import type { TelemetryFrame } from '../types/telemetry'
 import { flightControlAvailability } from '../utils/flightControlGuards'
 import { aircraftFingerprint, loadPreflightSnapshot, type PreflightSnapshot } from '../utils/preflight'
 import { landedStateText, px4IsAirborne, px4TelemetryToFrame } from '../utils/px4Flight'
+import { px4SessionPresentation } from '../utils/px4Session'
 import { flightValidationReady } from '../utils/trainingFlow'
 
 const route = useRoute()
@@ -322,6 +325,7 @@ const pendingTarget = ref<{ x: number; y: number } | null>(null)
 const preflightSnapshot = ref<PreflightSnapshot | null>(null)
 
 const px4Telemetry = ref<Px4Telemetry | null>(null)
+const px4Status = ref<Px4Status | null>(null)
 const px4History = ref<TelemetryFrame[]>([])
 const px4Frame = ref<TelemetryFrame>(blankTelemetry())
 const px4Error = ref('')
@@ -347,6 +351,9 @@ const preflightReady = computed(() => Boolean(preflightSnapshot.value?.passed))
 const flightReady = computed(() => assemblyReady.value && preflightReady.value)
 const px4Mode = computed(() => preflightSnapshot.value?.bridge_mode === 'live')
 const px4Connected = computed(() => Boolean(px4Telemetry.value?.connected))
+const px4SessionSource = computed<Px4Status | null>(() => px4Telemetry.value ?? px4Status.value)
+const px4SessionView = computed(() => px4SessionPresentation(px4SessionSource.value))
+const px4Queued = computed(() => px4SessionView.value.tone === 'queued')
 const px4Airborne = computed(() => px4IsAirborne(px4Telemetry.value))
 const activeAirborne = computed(() => px4Mode.value ? px4Airborne.value : store.airborne)
 
@@ -394,7 +401,7 @@ const flightCommandHint = computed(() => {
   if (!preflightReady.value) return '先完成系统调试页的起飞前检查并生成飞行许可。'
 
   if (px4Mode.value) {
-    if (!px4Connected.value) return '当前许可来自真实 PX4 调试流程：请启动 PX4 SIH 与 Bridge，等待 Heartbeat。'
+    if (!px4Connected.value) return px4SessionView.value.detail
     if (!activeTelemetry.value.armed) return 'PX4 已连接：先解锁，再执行起飞。'
     if (!px4Airborne.value) return 'PX4 已解锁：设置相对高度后执行 Takeoff。'
     if (activeTelemetry.value.flight_mode === 'LANDING') return 'PX4 正在执行降落，等待着陆状态返回地面。'
@@ -418,17 +425,13 @@ const powerText = computed(() => activeTelemetry.value.power.estimated_power_w >
 const batteryPercent = computed(() => Math.round(activeTelemetry.value.power.battery_remaining * 100))
 const dataSourceText = computed(() => px4Mode.value ? 'PX4 SIH / MAVLink' : 'UAV-Studio Simple Simulator')
 const connectionText = computed(() => {
-  if (px4Mode.value) return px4Connected.value ? 'PX4 已连接' : 'PX4 未连接'
+  if (px4Mode.value) return px4SessionView.value.statusText
   return store.connectionStatus === 'CONNECTED' ? '已连接' : store.connectionStatus === 'CONNECTING' ? '连接中' : '未连接'
 })
 const heartbeatText = computed(() => {
   const age = px4Telemetry.value?.heartbeat_age_s
   if (!px4Connected.value || typeof age !== 'number') return '等待'
   return `${age.toFixed(2)} s`
-})
-const px4ConnectionDetail = computed(() => {
-  if (px4Connected.value) return `${px4Telemetry.value?.connection_url || 'MAVLink'} · SYSID ${px4Telemetry.value?.system_id ?? '—'}`
-  return px4Error.value || '不会回退到旧模拟器'
 })
 const landedText = computed(() => landedStateText(px4Telemetry.value?.landed_state))
 const amslText = computed(() => {
@@ -543,13 +546,15 @@ async function connectPx4(): Promise<void> {
   let status
   try {
     status = await px4Api.status()
+    px4Status.value = status
   } catch {
     // Bridge may be running but not initialized yet; use connect for a single retry.
     status = await px4Api.connect()
+    px4Status.value = status
   }
 
   if (!status.running || !status.connected) {
-    try { await px4Api.connect() } catch { /* polling below reports the current state */ }
+    try { px4Status.value = await px4Api.connect() } catch { /* polling below reports the current state */ }
   }
 
   startPx4Polling()
@@ -559,7 +564,7 @@ async function connectPx4(): Promise<void> {
   if (px4Telemetry.value?.connected) {
     await requestPx4Streams()
   } else {
-    px4Error.value = px4Telemetry.value?.last_error || 'Bridge 已启动，但尚未收到 PX4 Heartbeat'
+    px4Error.value = px4SessionSource.value?.last_error || px4SessionView.value.detail
   }
 }
 
@@ -588,6 +593,7 @@ async function pollPx4(): Promise<void> {
   try {
     const telemetry = await px4Api.telemetry()
     px4Telemetry.value = telemetry
+    px4Status.value = telemetry
 
     if (telemetry.connected && px4SessionStartedAt.value === null) {
       px4SessionStartedAt.value = performance.now()
@@ -794,6 +800,9 @@ function deg(radians: number): string {
   background:#f8fafc;
 }
 .source-banner.live { border-color:#bfe7ce; background:#f3fbf6; }
+.source-banner.queued { border-color:#b9d5f4; background:#f2f8ff; }
+.source-banner.starting { border-color:#eed49b; background:#fffaf0; }
+.source-banner.error { border-color:#efb9b4; background:#fff5f4; }
 .source-dot {
   width:8px;
   height:8px;
@@ -806,6 +815,8 @@ function deg(radians: number): string {
   background:#22a45d;
   box-shadow:0 0 0 4px rgba(34,164,93,.12);
 }
+.source-banner.queued .source-dot { background:#2f80ed; box-shadow:0 0 0 4px rgba(47,128,237,.12); }
+.source-banner.error .source-dot { background:#dc4c42; box-shadow:0 0 0 4px rgba(220,76,66,.12); }
 .source-banner div { min-width:0; display:grid; gap:2px; }
 .source-banner b { color:#26364d; font-size:10px; }
 .source-banner small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#728197; font-size:8px; }
@@ -847,6 +858,8 @@ function deg(radians: number): string {
 }
 .stage-status-banner b { font-size:11px; }
 .stage-status-banner span { font-size:9px; line-height:1.4; }
+.stage-status-banner.queued { border-color:#b9d5f4; background:rgba(243,248,255,.96); color:#245b96; }
+.stage-status-banner.error { border-color:#efb9b4; background:rgba(255,246,245,.96); color:#9d352d; }
 .px4-source-section { border-color:#cde8da; }
 .status-text { max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 </style>

@@ -404,10 +404,20 @@ def register_classroom_reliability_routes(
             return _blank_telemetry("尚未申请 PX4 资源")
         row, slot, payload = _sync_runtime_status(session, row)
         if slot is None or not payload.get("connected"):
-            return _blank_telemetry(
+            waiting = _blank_telemetry(
                 str(payload.get("last_error") or "PX4资源准备中"),
                 queue_position=int(payload.get("queue_position") or 0),
             )
+            waiting.update(
+                {
+                    "session_status": payload.get("session_status", waiting["session_status"]),
+                    "queue_position": int(payload.get("queue_position") or 0),
+                    "slot_id": payload.get("slot_id"),
+                    "slot_port": payload.get("slot_port"),
+                    "run_id": payload.get("run_id"),
+                }
+            )
+            return waiting
         telemetry = session_manager.telemetry(slot)
         telemetry.update({"session_status": row.status, "queue_position": 0, "slot_id": slot.slot_id})
         return telemetry
