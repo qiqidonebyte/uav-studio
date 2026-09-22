@@ -1,15 +1,7 @@
 import assert from 'node:assert/strict'
-import { chromium } from 'playwright-core'
+import { baseUrl, launchBrowser, loginAsAdmin } from './p0-helpers.mjs'
 
-const baseUrl = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:5174'
-const edgePath =
-  process.env.EDGE_PATH ??
-  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-
-const browser = await chromium.launch({
-  executablePath: edgePath,
-  headless: true,
-})
+const browser = await launchBrowser()
 
 async function waitScene(page) {
   await page.waitForFunction(
@@ -34,6 +26,7 @@ try {
     viewport: { width: 1600, height: 1000 },
     locale: 'zh-CN',
   })
+  await loginAsAdmin(page)
   await page.goto(`${baseUrl}/assembly`, { waitUntil: 'networkidle' })
   await waitScene(page)
 

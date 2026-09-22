@@ -62,6 +62,25 @@ export async function launchBrowser() {
   )
 }
 
+/**
+ * Every learning page is protected by an HttpOnly session. Browser tests run
+ * in fresh contexts, so centralise the seeded test-user login instead of
+ * accidentally relying on a developer's existing browser session.
+ */
+export async function loginAsAdmin(page) {
+  const username = process.env.E2E_ADMIN_USERNAME ?? 'admin'
+  const password = process.env.E2E_ADMIN_PASSWORD ?? '123456'
+
+  await page.goto(`${baseUrl}/login`, { waitUntil: 'networkidle' })
+  if (!page.url().includes('/login')) return
+
+  await page.getByTestId('login-form').waitFor({ state: 'visible', timeout: 10000 })
+  await page.getByTestId('login-username').fill(username)
+  await page.getByTestId('login-password').fill(password)
+  await page.getByTestId('login-submit').click()
+  await page.waitForURL('**/aircraft', { timeout: 10000 })
+}
+
 export function createRunner(label) {
   const results = []
 
@@ -94,6 +113,7 @@ export function createRunner(label) {
 }
 
 export async function openAssembly(page) {
+  await loginAsAdmin(page)
   await page.goto(`${baseUrl}/assembly`, { waitUntil: 'networkidle' })
   await page.locator('.assembly-step').first().waitFor({ state: 'visible', timeout: 10000 })
 }

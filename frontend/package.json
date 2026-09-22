@@ -20,7 +20,8 @@
     "e2e:component-library": "node tests/e2e-component-library.mjs",
     "e2e:settings": "node tests/e2e-settings.mjs",
     "e2e:aircraft-library": "node tests/e2e-aircraft-library.mjs",
-    "e2e:auth": "node tests/e2e-auth.mjs"
+    "e2e:auth": "node tests/e2e-auth.mjs",
+    "test:browser": "node tests/run-browser-regression.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",

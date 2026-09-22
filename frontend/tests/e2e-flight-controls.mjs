@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { baseUrl, launchBrowser } from './p0-helpers.mjs'
+import { baseUrl, launchBrowser, loginAsAdmin } from './p0-helpers.mjs'
 
 const browser = await launchBrowser()
 
@@ -9,6 +9,7 @@ async function disabled(page, testId) {
 
 try {
   const page = await browser.newPage({ viewport: { width: 1366, height: 768 } })
+  await loginAsAdmin(page)
   await page.goto(`${baseUrl}/flight`, { waitUntil: 'networkidle' })
   await page.getByTestId('flight-start').waitFor({ state: 'visible' })
 

@@ -1,18 +1,10 @@
 import assert from 'node:assert/strict'
-import { chromium } from 'playwright-core'
-
-const baseUrl = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:5174'
-const edgePath =
-  process.env.EDGE_PATH ??
-  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+import { baseUrl, launchBrowser } from './p0-helpers.mjs'
 
 const username = 'e2e_auth_student'
 const password = 'uavstudio-e2e-2026'
 
-const browser = await chromium.launch({
-  executablePath: edgePath,
-  headless: true,
-})
+const browser = await launchBrowser()
 
 try {
   const context = await browser.newContext({

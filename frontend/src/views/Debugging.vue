@@ -989,7 +989,7 @@ import { calculateRcScore, cloneRcDraft, defaultRcDraft, flattenRcDraft, normali
 import { aircraftFingerprint, clearPreflightSnapshot, loadPreflightSnapshot, preflightScore, savePreflightSnapshot, type PreflightCheckRecord, type PreflightSnapshot } from '../utils/preflight'
 import { px4SessionPresentation } from '../utils/px4Session'
 import { loadFaultTrainingCases, scoreFaultTraining, trainingCategoryText, trainingDifficultyText, type FaultTrainingCase, type TrainingCategory, type TrainingEvaluation } from '../utils/training'
-import { centeredPwm, releasedStickValues, resolvedVirtualRcChannel, throttlePwm, virtualStickPoint, type VirtualStickSide } from '../utils/virtualRc'
+import { centeredPwm, releasedStickValues, throttlePwm, virtualStickPoint, type VirtualStickSide } from '../utils/virtualRc'
 import rcTransmitterPhoto from '../assets/remote/rc-transmitter-frsky-x9d.jpg'
 
 type SectionKey = 'sensors' | 'rc' | 'power' | 'safety' | 'preflight'
@@ -1449,17 +1449,10 @@ const rcDirtyKeys = computed(() => Object.entries(rcCurrentFlat.value)
   .filter(([key, value]) => !(key in rcBaselineFlat.value) || Math.abs(Number(value) - Number(rcBaselineFlat.value[key])) > 1e-6)
   .map(([key]) => key))
 const rcDirtyCount = computed(() => rcDirtyKeys.value.length)
-const virtualRcMapping = computed<Record<RcRole, number>>(() => ({
-  roll: resolvedVirtualRcChannel('roll', rcDraft.value.mapping.roll),
-  pitch: resolvedVirtualRcChannel('pitch', rcDraft.value.mapping.pitch),
-  throttle: resolvedVirtualRcChannel('throttle', rcDraft.value.mapping.throttle),
-  yaw: resolvedVirtualRcChannel('yaw', rcDraft.value.mapping.yaw),
-}))
 const rcMappedValues = computed<Record<RcRole, number>>(() => {
   const result = { roll: 0, pitch: 0, throttle: 0, yaw: 0 } as Record<RcRole, number>
-  const mapping = rcVirtualMode.value ? virtualRcMapping.value : rcDraft.value.mapping
   for (const role of rcRoles) {
-    const channel = Number(mapping[role])
+    const channel = Number(rcDraft.value.mapping[role])
     const calibration = rcDraft.value.channels[channel]
     const pwm = currentRcChannels.value[channel - 1]
     if (!calibration) continue
@@ -2180,13 +2173,14 @@ function setDemoRcRole(role: RcRole, event: Event): void {
 }
 
 function setVirtualRolePwm(role: RcRole, value: number): void {
-  const channel = virtualRcMapping.value[role]
+  const channel = Number(rcDraft.value.mapping[role])
+  if (!Number.isInteger(channel) || channel < 1 || channel > 18) return
   rcDemoChannels.value[channel - 1] = Math.max(800, Math.min(2200, Math.round(value)))
   rcDemoChannels.value = [...rcDemoChannels.value]
 }
 
 function virtualRolePwm(role: RcRole): number {
-  const channel = virtualRcMapping.value[role]
+  const channel = Number(rcDraft.value.mapping[role])
   const value = rcDemoChannels.value[channel - 1]
   return typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : role === 'throttle' ? 1000 : 1500
 }
@@ -2250,8 +2244,7 @@ function rcChannelBarPercent(channel: number): string {
 }
 
 function rcChannelRoles(channel: number): string {
-  const mapping = rcVirtualMode.value ? virtualRcMapping.value : rcDraft.value.mapping
-  const roles = rcRoles.filter(role => Number(mapping[role]) === channel)
+  const roles = rcRoles.filter(role => Number(rcDraft.value.mapping[role]) === channel)
   return roles.length ? roles.map(role => rcRoleLabels[role].split(' ')[0]).join(' / ') : '未映射'
 }
 

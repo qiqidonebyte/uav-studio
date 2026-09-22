@@ -1,11 +1,9 @@
-# Tests
+# Backend tests
 
-AI 开发时先创建：
+运行全部后端测试：
 
-- test_engineering.py
-- test_pid.py
-- test_simulator.py
-- test_api.py
-- test_full_flight_sequence.py
+```bash
+python -m pytest -q
+```
 
-以 `docs/06_TEST_PLAN.md` 为准。
+测试范围覆盖工程校核、数据契约、鉴权与工作区隔离、训练闭环、PX4 桥接 HTTP 契约及 12 槽位课堂可靠性。发布前的完整自动化、浏览器和课堂人工验收，见 `docs/TEST_AND_TEACHING_ACCEPTANCE_V1.md`。

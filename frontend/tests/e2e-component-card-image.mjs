@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { baseUrl, launchBrowser } from './p0-helpers.mjs'
+import { baseUrl, launchBrowser, loginAsAdmin } from './p0-helpers.mjs'
 
 const browser = await launchBrowser()
 
 try {
   const page = await browser.newPage({ viewport: { width: 1366, height: 768 } })
+  await loginAsAdmin(page)
   await page.goto(`${baseUrl}/assembly`, { waitUntil: 'networkidle' })
   await page.getByText('机架 · 组件选择').waitFor({ state: 'visible' })
 

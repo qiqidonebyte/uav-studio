@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  centeredPwm,
-  releasedStickValues,
-  resolvedVirtualRcChannel,
-  throttlePwm,
-  virtualStickPoint,
-} from '../src/utils/virtualRc'
+import { centeredPwm, releasedStickValues, throttlePwm, virtualStickPoint } from '../src/utils/virtualRc'
 
 describe('interactive virtual RC transmitter', () => {
   it('maps pointer position to clamped stick axes', () => {
@@ -28,13 +22,5 @@ describe('interactive virtual RC transmitter', () => {
     expect(releasedStickValues('right', 1730)).toEqual({ roll: 1500, pitch: 1500 })
     expect(releasedStickValues('left', 1730)).toEqual({ yaw: 1500, throttle: 1730 })
     expect(releasedStickValues('left', 2500).throttle).toBe(2000)
-  })
-
-  it('keeps virtual teaching sticks usable when PX4 has no RC mapping', () => {
-    expect(resolvedVirtualRcChannel('roll', 0)).toBe(1)
-    expect(resolvedVirtualRcChannel('pitch', 0)).toBe(2)
-    expect(resolvedVirtualRcChannel('throttle', 0)).toBe(3)
-    expect(resolvedVirtualRcChannel('yaw', 0)).toBe(4)
-    expect(resolvedVirtualRcChannel('roll', 7)).toBe(7)
   })
 })

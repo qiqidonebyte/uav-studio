@@ -47,7 +47,5 @@ describe('RC system workbench', () => {
     expect(source).toContain('rc-transmitter-frsky-x9d.jpg')
     expect(source).toContain('@lostpointercapture="releaseVirtualStick')
     expect(source).toContain("window.addEventListener('blur', releaseActiveVirtualStick)")
-    expect(source).toContain('resolvedVirtualRcChannel')
-    expect(source).toContain('const virtualRcMapping')
   })
 })

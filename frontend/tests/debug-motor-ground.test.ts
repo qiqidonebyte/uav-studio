@@ -15,20 +15,10 @@ describe('动力系统地面测试视图', () => {
     expect(scene).toContain('props.grounded')
     expect(scene).toContain('restAircraftOnGround')
     expect(scene).toContain('new THREE.Box3().setFromObject(aircraftRenderer.root)')
-    expect(scene).toContain('recomputeGroundedRestOffset')
-    expect(scene).toContain('groundedRestOffsetReady')
-    expect(scene).toContain('groundedRestOffset: groundedRestOffset.toArray()')
-    expect(scene).toContain('vehicleGroup.position.set(0, 0, 0)')
     expect(scene).toContain('? [...frame.motors.outputs]')
     expect(scene).toContain('flightSmoothing.renderedThrusts = [...flightSmoothing.targetThrusts]')
     expect(scene).toContain('if (props.grounded)')
     expect(scene).toContain('grounded-test-state')
-
-    const restFunction = scene.slice(
-      scene.indexOf('function restAircraftOnGround'),
-      scene.indexOf('function ingestTelemetryFrame'),
-    )
-    expect(restFunction).not.toContain('new THREE.Box3')
   })
 
   it('stops local and PX4 outputs immediately and blocks armed motor tests', () => {

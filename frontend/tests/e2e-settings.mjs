@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
-import { launchBrowser, baseUrl } from './p0-helpers.mjs'
+import { launchBrowser, baseUrl, loginAsAdmin } from './p0-helpers.mjs'
 
 const browser = await launchBrowser()
 try {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, locale: 'zh-CN' })
+  await loginAsAdmin(page)
   await page.goto(`${baseUrl}/settings`, { waitUntil: 'networkidle' })
   await page.getByText('本地管理员').waitFor({ state: 'visible', timeout: 10000 })
   assert.ok((await page.locator('.settings-user').innerText()).includes('admin'))

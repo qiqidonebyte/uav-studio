@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
-import { launchBrowser, baseUrl } from './p0-helpers.mjs'
+import { launchBrowser, baseUrl, loginAsAdmin } from './p0-helpers.mjs'
 
 const browser = await launchBrowser()
 try {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, locale: 'zh-CN' })
+  await loginAsAdmin(page)
   await page.goto(`${baseUrl}/components`, { waitUntil: 'networkidle' })
   await page.locator('.library-card').first().waitFor({ state: 'visible', timeout: 10000 })
 

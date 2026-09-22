@@ -30,3 +30,40 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
+
+  browser-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+
+      - name: Start API and browser application
+        run: |
+          uvicorn backend.main:app --host 127.0.0.1 --port 8000 > /tmp/uav-api.log 2>&1 &
+          (cd frontend && npm run dev -- --host 127.0.0.1 --port 5174) > /tmp/uav-web.log 2>&1 &
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/api/health >/dev/null \
+              && curl --fail --silent http://127.0.0.1:5174/login >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/uav-api.log /tmp/uav-web.log
+          exit 1
+
+      - run: npm run test:browser
+        working-directory: frontend
