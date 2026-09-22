@@ -1,4 +1,5 @@
 export type VirtualStickSide = 'left' | 'right'
+export type VirtualRcRole = 'roll' | 'pitch' | 'throttle' | 'yaw'
 
 export interface VirtualStickPoint {
   x: number
@@ -14,6 +15,20 @@ export interface StickBounds {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
+}
+
+const virtualRcFallbackChannels: Record<VirtualRcRole, number> = {
+  roll: 1,
+  pitch: 2,
+  throttle: 3,
+  yaw: 4,
+}
+
+export function resolvedVirtualRcChannel(role: VirtualRcRole, configuredChannel: number): number {
+  const channel = Number(configuredChannel)
+  return Number.isInteger(channel) && channel >= 1 && channel <= 18
+    ? channel
+    : virtualRcFallbackChannels[role]
 }
 
 export function virtualStickPoint(clientX: number, clientY: number, bounds: StickBounds): VirtualStickPoint {
