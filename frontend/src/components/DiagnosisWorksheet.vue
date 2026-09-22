@@ -69,6 +69,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'saved', snapshot: DiagnosisWorksheetSnapshot): void
   (event: 'ready-change', ready: boolean): void
+  (event: 'progress-change', completed: number): void
 }>()
 
 const fields: Array<{ key: WorksheetField; index: number; label: string; help: string; placeholder: string }> = [
@@ -171,6 +172,7 @@ function markDirty(): void {
 
 watch(storageKey, load)
 watch(complete, value => emit('ready-change', value), { immediate: true })
+watch(completedCount, value => emit('progress-change', value), { immediate: true })
 watch(form, () => { if (dirty.value) persistLocal(snapshot()) }, { deep: true })
 onMounted(load)
 

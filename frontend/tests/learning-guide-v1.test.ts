@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { RouteLocationNormalizedLoaded } from 'vue-router'
 import {
@@ -8,6 +9,10 @@ import {
 
 function route(path: string, query: Record<string, string> = {}): RouteLocationNormalizedLoaded {
   return { path, query, fullPath: path, hash: '', name: undefined, params: {}, matched: [], meta: {}, redirectedFrom: undefined } as unknown as RouteLocationNormalizedLoaded
+}
+
+function source(relative: string): string {
+  return readFileSync(new URL(relative, import.meta.url), 'utf8')
 }
 
 describe('Learning Guide V1', () => {
@@ -39,9 +44,37 @@ describe('Learning Guide V1', () => {
   })
 
   it('uses evidence-chain language for assigned diagnosis guidance', () => {
-    const guide = pageLearningGuide(route('/debugging', { run: '9', scenario: 'F01_COMPASS' }), 'student')
-    expect(guide.title).toContain('证据')
-    expect(guide.steps).toContain('提出故障原因')
-    expect(guide.completion).toContain('诊断工作单')
+    const guide = pageLearningGuide(route('/debugging', { run: '9', scenario: 'F01_COMPASS', section: 'sensors' }), 'student')
+    expect(guide.title).toContain('飞控与传感器')
+    expect(guide.objective).toContain('证据链')
+    expect(guide.steps.some(item => item.includes('GNSS Fix'))).toBe(true)
+    expect(guide.observe?.some(item => item.includes('数据是否持续刷新'))).toBe(true)
+    expect(guide.mistakes?.some(item => item.includes('校准命令已受理'))).toBe(true)
+  })
+
+  it('changes detailed guidance with every debugging subsection', () => {
+    const sensors = pageLearningGuide(route('/debugging', { section: 'sensors' }), 'student')
+    const rc = pageLearningGuide(route('/debugging', { section: 'rc' }), 'student')
+    const power = pageLearningGuide(route('/debugging', { section: 'power' }), 'student')
+    const safety = pageLearningGuide(route('/debugging', { section: 'safety' }), 'student')
+    const preflight = pageLearningGuide(route('/debugging', { section: 'preflight' }), 'student')
+
+    expect(sensors.currentTask).toContain('IMU')
+    expect(rc.currentTask).toContain('Roll')
+    expect(power.currentTask).toContain('M1–M4')
+    expect(safety.currentTask).toContain('低电量')
+    expect(preflight.title).toContain('六项门禁')
+    expect(power.nextTo).toEqual({ path: '/debugging', query: { section: 'safety' } })
+  })
+
+  it('keeps the diagnosis worksheet task-based, collapsed and required on course submission', () => {
+    const debugging = source('../src/views/Debugging.vue')
+    const worksheet = source('../src/components/DiagnosisWorksheet.vue')
+
+    expect(debugging).toContain('v-if="activeTrainingCase"')
+    expect(debugging).toContain('v-show="diagnosisWorksheetExpanded"')
+    expect(debugging).toContain("auth.user?.role === 'student' && assignedRunId.value && !worksheet?.isComplete()")
+    expect(debugging).toContain('diagnosisWorksheetExpanded.value = true')
+    expect(worksheet).toContain("(event: 'progress-change', completed: number)")
   })
 })

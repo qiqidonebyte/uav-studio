@@ -97,17 +97,46 @@
         </div>
       </section>
 
-      <DiagnosisWorksheet
-        ref="diagnosisWorksheetRef"
-        :user-id="auth.user?.id ?? null"
-        :role="learningRole"
-        :run-id="assignedRunId"
-        :scenario-id="activeTrainingCase?.id || assignedScenarioId || scenario"
-        :scenario-title="activeTrainingCase?.title || '自由调试'"
-        :symptom="activeTrainingCase?.student_brief.symptom || ''"
-        @ready-change="diagnosisWorksheetReady = $event"
-        @saved="diagnosisWorksheetSaved = true"
-      />
+      <section
+        v-if="activeTrainingCase"
+        ref="diagnosisWorksheetShellRef"
+        class="diagnosis-worksheet-shell"
+        :class="{ expanded: diagnosisWorksheetExpanded, complete: diagnosisWorksheetReady }"
+      >
+        <button
+          type="button"
+          class="diagnosis-worksheet-summary"
+          :aria-expanded="diagnosisWorksheetExpanded"
+          @click="diagnosisWorksheetExpanded = !diagnosisWorksheetExpanded"
+        >
+          <span class="worksheet-summary-icon">▤</span>
+          <span class="worksheet-summary-copy">
+            <b>诊断工作单</b>
+            <small v-if="auth.user?.role === 'student' && assignedRunId">课程任务必填 · 提交诊断时检查五项证据链</small>
+            <small v-else>自主练习选填 · 需要记录诊断过程时再展开</small>
+          </span>
+          <span class="worksheet-summary-progress">
+            <i><em :style="{ width: `${diagnosisWorksheetCompletedCount * 20}%` }"></em></i>
+            <b>{{ diagnosisWorksheetCompletedCount }}/5</b>
+          </span>
+          <span class="worksheet-summary-action">{{ diagnosisWorksheetExpanded ? '收起' : diagnosisWorksheetReady ? '查看' : '填写' }} {{ diagnosisWorksheetExpanded ? '⌃' : '⌄' }}</span>
+        </button>
+
+        <div v-show="diagnosisWorksheetExpanded" class="diagnosis-worksheet-content">
+          <DiagnosisWorksheet
+            ref="diagnosisWorksheetRef"
+            :user-id="auth.user?.id ?? null"
+            :role="learningRole"
+            :run-id="assignedRunId"
+            :scenario-id="activeTrainingCase.id"
+            :scenario-title="activeTrainingCase.title"
+            :symptom="activeTrainingCase.student_brief.symptom"
+            @progress-change="diagnosisWorksheetCompletedCount = $event"
+            @ready-change="diagnosisWorksheetReady = $event"
+            @saved="diagnosisWorksheetSaved = true"
+          />
+        </div>
+      </section>
 
       <template v-if="activeSection === 'sensors'">
         <div class="sensor-workbench">
@@ -904,7 +933,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import DebugMotorScene from '../components/DebugMotorScene.vue'
 import DiagnosisWorksheet, { type DiagnosisWorksheetSnapshot } from '../components/DiagnosisWorksheet.vue'
 import { px4Api, type Px4SensorKey, type Px4Telemetry } from '../api/px4'
@@ -938,6 +967,7 @@ interface DebugLog {
 const assemblyStore = useAssemblyStore()
 const auth = useAuthStore()
 const route = useRoute()
+const router = useRouter()
 const activeSection = ref<SectionKey>('power')
 const scenario = ref<ScenarioKey>('standard')
 const bridgeMode = ref<'demo' | 'live'>('demo')
@@ -1017,6 +1047,9 @@ const trainingSubmittedEvaluation = ref<TrainingEvaluation | null>(null)
 const trainingRemoteStatus = ref('')
 const diagnosisWorksheetReady = ref(false)
 const diagnosisWorksheetSaved = ref(false)
+const diagnosisWorksheetExpanded = ref(false)
+const diagnosisWorksheetCompletedCount = ref(0)
+const diagnosisWorksheetShellRef = ref<HTMLElement | null>(null)
 const diagnosisWorksheetRef = ref<{
   isComplete: () => boolean
   save: () => Promise<DiagnosisWorksheetSnapshot>
@@ -1712,6 +1745,10 @@ function startTrainingCase(trainingCase: FaultTrainingCase): void {
   trainingCurrentHint.value = ''
   trainingSubmittedEvaluation.value = null
   trainingRemoteStatus.value = assignedRunId.value ? '正在记录课程实训过程' : ''
+  diagnosisWorksheetReady.value = false
+  diagnosisWorksheetSaved.value = false
+  diagnosisWorksheetExpanded.value = false
+  diagnosisWorksheetCompletedCount.value = 0
 
   // Avoid a watcher loading normal parameters between scenario reset and injection.
   activeSection.value = 'power'
@@ -1746,6 +1783,10 @@ function enterFreeDebug(): void {
   trainingWrongOperations.value = 0
   trainingCurrentHint.value = ''
   trainingSubmittedEvaluation.value = null
+  diagnosisWorksheetReady.value = false
+  diagnosisWorksheetSaved.value = false
+  diagnosisWorksheetExpanded.value = false
+  diagnosisWorksheetCompletedCount.value = 0
   switchScenario('standard')
 
   const rc = defaultRcDraft(18)
@@ -1778,8 +1819,11 @@ async function submitTrainingCase(): Promise<void> {
   if (!activeTrainingCase.value) return
   const worksheet = diagnosisWorksheetRef.value
   if (auth.user?.role === 'student' && assignedRunId.value && !worksheet?.isComplete()) {
+    diagnosisWorksheetExpanded.value = true
     trainingCurrentHint.value = '提交课程诊断前，请先完成诊断工作单的现象、证据、原因、修复和验证五项。'
     appendLog('诊断工作单未完成', '课程任务要求先形成完整证据链，再提交诊断。', 'warn')
+    await nextTick()
+    diagnosisWorksheetShellRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     return
   }
   if (worksheet) await worksheet.save()
@@ -2740,6 +2784,10 @@ watch(activeSection, next => {
   }
   if (next === 'safety' && !safetyLoadedOnce.value) void loadSafetyParameters()
   if (next === 'rc' && !rcLoadedOnce.value) void loadRcParameters()
+  const routeSection = Array.isArray(route.query.section) ? route.query.section[0] : route.query.section
+  if (routeSection !== next) {
+    void router.replace({ query: { ...route.query, section: next } })
+  }
 })
 
 watch(() => route.query.section, value => {
@@ -2791,6 +2839,7 @@ onMounted(async () => {
   await assemblyStore.initialize()
   const requestedSection = Array.isArray(route.query.section) ? route.query.section[0] : route.query.section
   if (requestedSection && steps.some(item => item.key === requestedSection)) activeSection.value = requestedSection as SectionKey
+  else void router.replace({ query: { ...route.query, section: activeSection.value } })
   try {
     trainingCases.value = await loadFaultTrainingCases()
     trainingCatalogError.value = ''
@@ -3044,6 +3093,7 @@ td:first-child { color:#45baff;font-weight:800; }
 /* Fault Training V1 */
 .training-sidebar-section{position:relative}.training-side-title{display:flex;align-items:center;justify-content:space-between}.training-side-title small{color:#50c9f3;font-size:7px}.training-current-card{border-color:rgba(85,217,255,.42)!important;background:linear-gradient(135deg,rgba(23,115,168,.23),rgba(8,39,62,.75))!important}.training-current-card small{color:#7ddcff!important}.training-library-button{width:100%;display:grid;grid-template-columns:24px 1fr 12px;align-items:center;gap:7px;margin-top:7px;padding:9px 8px;border:1px dashed rgba(85,217,255,.28);border-radius:7px;background:rgba(16,66,98,.22);color:#bdeaff;text-align:left;cursor:pointer}.training-library-button>span{display:grid;place-items:center;width:22px;height:22px;border-radius:6px;background:rgba(40,168,255,.12);color:#55d9ff}.training-library-button div{display:grid;gap:1px}.training-library-button b{font-size:9px}.training-library-button small{color:#678da9;font-size:7px}.training-library-button strong{color:#55d9ff;font-size:16px}.training-library-button:hover{border-color:rgba(85,217,255,.55);background:rgba(20,91,132,.28)}.training-catalog-error{display:block;margin-top:6px;color:#ff9089;font-size:7px;line-height:1.4}
 .training-task-hud{display:grid;grid-template-columns:minmax(250px,1.35fr) minmax(330px,1fr) auto;gap:12px;align-items:center;margin-bottom:12px;padding:11px 13px;border:1px solid rgba(85,217,255,.25);border-radius:9px;background:linear-gradient(135deg,rgba(9,38,58,.96),rgba(8,26,42,.96));box-shadow:inset 3px 0 #25aef0}.training-task-main{display:flex;align-items:center;gap:10px;min-width:0}.training-case-code{flex:0 0 auto;padding:4px 7px;border-radius:6px;background:rgba(85,217,255,.1);color:#64dfff;font-size:8px;font-weight:800;letter-spacing:.05em}.training-task-main div{min-width:0;display:grid;gap:3px}.training-task-main b{color:#ecf8ff;font-size:11px}.training-task-main small{overflow:hidden;color:#7b9ab5;font-size:8px;line-height:1.4;text-overflow:ellipsis;white-space:nowrap}.training-task-meta{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.training-task-meta>div{display:grid;gap:2px;padding:7px 8px;border:1px solid rgba(92,142,181,.14);border-radius:6px;background:rgba(5,19,31,.55)}.training-task-meta span{color:#668aa7;font-size:6px}.training-task-meta b{overflow:hidden;color:#cfe8f8;font-size:8px;text-overflow:ellipsis;white-space:nowrap}.training-task-actions{display:grid;grid-template-columns:repeat(2,90px);gap:5px}.training-task-actions button{min-height:29px;border:1px solid rgba(87,154,202,.26);border-radius:6px;background:#0d2b42;color:#a9d3eb;font-size:7px;cursor:pointer}.training-task-actions button:hover{border-color:#2aaeff;color:white}.training-task-actions .training-submit{border-color:#249fdc;background:#116da3;color:#fff}.training-task-actions .training-exit{color:#93a8b9}.training-hint,.training-result{grid-column:1/-1;display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:6px}.training-hint{border:1px solid rgba(240,189,69,.25);background:rgba(111,80,25,.12);color:#d8b86d}.training-hint b{font-size:8px}.training-hint span{font-size:8px;line-height:1.45}.training-result{display:grid;grid-template-columns:1fr auto minmax(260px,1fr);border:1px solid rgba(255,112,99,.22);background:rgba(105,37,32,.1)}.training-result.passed{border-color:rgba(72,223,139,.24);background:rgba(34,113,72,.1)}.training-result div{display:grid;gap:2px}.training-result b{color:#f2f8fc;font-size:9px}.training-result small,.training-result>span{color:#7f9ab1;font-size:7px}.training-result strong{font-size:20px;color:#f3c85e}.training-result.passed strong{color:#58df91}.training-result strong em{font-size:9px;font-style:normal;color:#839caf}
+.diagnosis-worksheet-shell{margin:0 0 12px;border:1px solid rgba(85,217,255,.22);border-radius:9px;background:rgba(8,29,46,.86);overflow:hidden}.diagnosis-worksheet-shell.complete{border-color:rgba(72,223,139,.3)}.diagnosis-worksheet-shell.expanded{background:rgba(7,24,39,.96)}.diagnosis-worksheet-summary{width:100%;min-height:54px;display:grid;grid-template-columns:32px minmax(220px,1fr) minmax(130px,220px) 68px;gap:10px;align-items:center;padding:9px 12px;border:0;background:transparent;color:#dcecf8;text-align:left;cursor:pointer}.diagnosis-worksheet-summary:hover{background:rgba(40,168,255,.06)}.worksheet-summary-icon{display:grid;place-items:center;width:30px;height:30px;border-radius:7px;background:rgba(40,168,255,.12);color:#63d9ff;font-size:15px}.worksheet-summary-copy{display:grid;gap:3px}.worksheet-summary-copy b{font-size:10px}.worksheet-summary-copy small{color:#7897b0;font-size:8px;line-height:1.4}.worksheet-summary-progress{display:grid;grid-template-columns:minmax(70px,1fr) 28px;gap:8px;align-items:center}.worksheet-summary-progress>i{height:5px;overflow:hidden;border-radius:99px;background:#17344c}.worksheet-summary-progress em{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#2f91dd,#38d39a)}.worksheet-summary-progress b{color:#99bdd3;font-size:8px;text-align:right}.complete .worksheet-summary-progress b{color:#66dfa0}.worksheet-summary-action{justify-self:end;color:#68cfff;font-size:8px;font-weight:800}.diagnosis-worksheet-content{padding:0 10px 10px}.diagnosis-worksheet-content :deep(.diagnosis-worksheet){margin:0;box-shadow:none}@media(max-width:980px){.diagnosis-worksheet-summary{grid-template-columns:32px 1fr 58px}.worksheet-summary-progress{display:none}}
 .training-library-backdrop{position:fixed;z-index:1000;inset:58px 0 0;display:grid;place-items:center;padding:26px;background:rgba(2,9,16,.72);backdrop-filter:blur(6px)}.training-library-panel{width:min(1180px,94vw);max-height:86vh;overflow:auto;border:1px solid rgba(85,217,255,.25);border-radius:14px;background:linear-gradient(180deg,#0a1b2b,#071420);box-shadow:0 28px 80px rgba(0,0,0,.42);color:#dcecf8}.training-library-panel>header{display:flex;justify-content:space-between;gap:20px;padding:22px 24px 16px;border-bottom:1px solid rgba(88,137,176,.15)}.training-library-panel header>div>span{color:#53d8ff;font-size:8px;font-weight:800;letter-spacing:.16em}.training-library-panel h2{margin:5px 0 6px;font-size:22px}.training-library-panel p{margin:0;color:#7694ad;font-size:10px}.training-close{width:34px;height:34px;border:1px solid rgba(113,155,190,.2);border-radius:8px;background:rgba(255,255,255,.04);color:#a8c2d6;font-size:22px;cursor:pointer}.training-filter-row{display:flex;gap:7px;padding:14px 24px}.training-filter-row button{padding:6px 12px;border:1px solid rgba(89,139,180,.2);border-radius:999px;background:rgba(8,29,47,.65);color:#7898b2;font-size:8px;cursor:pointer}.training-filter-row button.active{border-color:rgba(85,217,255,.45);background:rgba(29,126,179,.18);color:#82e4ff}.training-case-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding:0 24px 24px}.training-case-card{display:grid;gap:11px;padding:15px;border:1px solid rgba(91,143,183,.18);border-radius:10px;background:rgba(7,24,39,.8);box-shadow:0 8px 22px rgba(0,0,0,.12)}.training-case-card:hover{border-color:rgba(85,217,255,.32);transform:translateY(-1px)}.training-case-card-head{display:grid;grid-template-columns:34px 1fr auto;gap:9px;align-items:center}.training-case-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:8px;background:rgba(40,168,255,.11);color:#61dcff;font-size:17px}.training-case-card-head div{display:grid;gap:2px}.training-case-card-head small{color:#6586a2;font-size:7px}.training-case-card-head b{color:#e6f3fb;font-size:11px}.training-case-card-head strong{color:#efc45a;font-size:10px;letter-spacing:1px}.training-case-card>p{min-height:35px;margin:0;color:#8aa5bb;font-size:9px;line-height:1.55}.training-case-card dl{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0}.training-case-card dl div{padding:7px 8px;border-radius:6px;background:rgba(4,17,29,.7)}.training-case-card dt{color:#63839d;font-size:6px}.training-case-card dd{margin:3px 0 0;color:#bbd3e4;font-size:8px}.training-case-task{display:grid;gap:3px;padding:8px 9px;border-left:2px solid rgba(85,217,255,.36);background:rgba(20,75,108,.12)}.training-case-task b{color:#65dcff;font-size:7px}.training-case-task span{color:#839eb4;font-size:8px;line-height:1.5}.training-start-button{min-height:34px;border:1px solid #249fdc;border-radius:7px;background:linear-gradient(180deg,#168fd0,#0e6d9f);color:white;font-size:9px;font-weight:700;cursor:pointer}.training-start-button:hover{filter:brightness(1.08)}
 @media(max-width:1400px){.training-task-hud{grid-template-columns:1fr 1fr}.training-task-actions{grid-column:1/-1;grid-template-columns:repeat(4,1fr)}.training-case-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:980px){.training-case-grid{grid-template-columns:1fr}.training-task-meta{grid-template-columns:1fr 1fr}}
 
