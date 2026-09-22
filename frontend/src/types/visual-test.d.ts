@@ -91,6 +91,8 @@ export interface UavVisualTestProbe {
   }
   assemblyViewMode: 'assembled' | 'exploded'
   explosionProgress: number
+  grounded: boolean
+  groundedRestOffset: [number, number, number]
   directionLabelsVisible: boolean
   explodedParts: ExplodedVisualPart[]
   explodedLabels: ExplodedVisualLabel[]
