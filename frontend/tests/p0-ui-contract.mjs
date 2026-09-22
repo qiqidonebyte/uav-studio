@@ -1,4 +1,4 @@
-import { createRunner, launchBrowser, openAssembly } from './p0-helpers.mjs'
+import { baseUrl, createRunner, launchBrowser, openAssembly } from './p0-helpers.mjs'
 
 const { run, finish, assert } = createRunner('P0 UI Contract')
 const browser = await launchBrowser()
@@ -129,6 +129,47 @@ try {
       }
     })
     assert.ok(bounds.bottom <= bounds.viewportHeight + 1, JSON.stringify(bounds))
+  })
+
+  await run('P0-UI-015', 'debugging workbench stays inside a 1366x768 classroom viewport', async () => {
+    await page.setViewportSize({ width: 1366, height: 768 })
+    await page.goto(`${baseUrl}/debugging?section=preflight`, { waitUntil: 'networkidle' })
+    await page.locator('.debug-page').waitFor({ state: 'visible', timeout: 10000 })
+    const bounds = await page.locator('.debug-page').evaluate(el => {
+      const rect = el.getBoundingClientRect()
+      return { top: rect.top, bottom: rect.bottom, viewportHeight: window.innerHeight }
+    })
+    assert.ok(bounds.top >= 0, JSON.stringify(bounds))
+    assert.ok(bounds.bottom <= bounds.viewportHeight + 1, JSON.stringify(bounds))
+  })
+
+  await run('P0-UI-016', 'learning review can scroll to its return action', async () => {
+    await page.goto(`${baseUrl}/review`, { waitUntil: 'networkidle' })
+    const review = page.locator('.review-page')
+    await review.waitFor({ state: 'visible', timeout: 10000 })
+    const returnAction = page.locator('.transfer-card a')
+    await returnAction.scrollIntoViewIfNeeded()
+    assert.equal(await returnAction.isVisible(), true)
+    const layout = await review.evaluate(el => ({ clientHeight: el.clientHeight, scrollHeight: el.scrollHeight }))
+    assert.ok(layout.clientHeight > 0 && layout.scrollHeight >= layout.clientHeight, JSON.stringify(layout))
+  })
+
+  await run('P0-UI-017', 'Mode 2 virtual transmitter follows drag and springs the right stick to center', async () => {
+    await page.goto(`${baseUrl}/debugging?section=rc`, { waitUntil: 'networkidle' })
+    await page.locator('.virtual-transmitter').waitFor({ state: 'visible', timeout: 10000 })
+    await page.locator('.virtual-rc-controls summary').click()
+    const rightStick = page.locator('.stick-pad').nth(1)
+    const box = await rightStick.boundingBox()
+    assert.ok(box)
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width * .85, box.y + box.height * .15)
+    const precisionInputs = page.locator('.virtual-rc-controls input')
+    assert.ok(Number(await precisionInputs.nth(0).inputValue()) > 1750, 'roll did not follow right drag')
+    assert.ok(Number(await precisionInputs.nth(1).inputValue()) > 1750, 'pitch did not follow upward drag')
+    await page.mouse.up()
+    assert.equal(await precisionInputs.nth(0).inputValue(), '1500')
+    assert.equal(await precisionInputs.nth(1).inputValue(), '1500')
   })
 
   finish()

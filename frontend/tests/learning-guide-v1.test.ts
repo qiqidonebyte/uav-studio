@@ -36,6 +36,14 @@ describe('Learning Guide V1', () => {
 
   it('preserves a course run while moving through diagnosis, preflight and review', () => {
     const current = route('/debugging', { run: '33', scenario: 'F05_FAILSAFE', assignment: '8' })
+    expect(learningStageTarget('debug', 'student', current)).toEqual({
+      path: '/debugging',
+      query: { run: '33', scenario: 'F05_FAILSAFE', assignment: '8', section: 'sensors' },
+    })
+    expect(learningStageTarget('diagnosis', 'student', current)).toEqual({
+      path: '/debugging',
+      query: { run: '33', scenario: 'F05_FAILSAFE', assignment: '8', guide: 'diagnosis', section: 'sensors' },
+    })
     expect(learningStageTarget('preflight', 'student', current)).toEqual({
       path: '/debugging',
       query: { run: '33', scenario: 'F05_FAILSAFE', assignment: '8', section: 'preflight' },

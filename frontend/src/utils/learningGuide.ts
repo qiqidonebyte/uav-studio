@@ -66,8 +66,8 @@ export function learningStageTarget(
   const trainingQuery = carryTrainingQuery(route)
   if (stage === 'prepare') return role === 'student' ? '/training' : '/teacher'
   if (stage === 'assembly') return Object.keys(trainingQuery).length ? { path: '/assembly', query: trainingQuery } : '/assembly'
-  if (stage === 'debug') return Object.keys(trainingQuery).length ? { path: '/debugging', query: trainingQuery } : '/debugging'
-  if (stage === 'diagnosis') return { path: '/debugging', query: { ...trainingQuery, guide: 'diagnosis' } }
+  if (stage === 'debug') return { path: '/debugging', query: { ...trainingQuery, section: 'sensors' } }
+  if (stage === 'diagnosis') return { path: '/debugging', query: { ...trainingQuery, guide: 'diagnosis', section: 'sensors' } }
   if (stage === 'preflight') return { path: '/debugging', query: { ...trainingQuery, section: 'preflight' } }
   if (stage === 'flight') return { path: '/flight', query: trainingQuery }
   return { path: '/review', query: trainingQuery.run ? { run: trainingQuery.run } : {} }

@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { studentTrainingApi, teacherApi } from '../api/teacher'
 import { useAuthStore } from '../stores/auth'
@@ -76,6 +76,8 @@ const loading = ref(true)
 const error = ref('')
 const detail = ref<TrainingRunDetail | null>(null)
 const worksheet = ref<DiagnosisWorksheetSnapshot | null>(null)
+const reviewReady = ref(false)
+let reviewLoadGeneration = 0
 
 const run = computed<TrainingRunView | null>(() => detail.value?.run ?? null)
 const runId = computed(() => {
@@ -128,32 +130,48 @@ function latestWorksheetFromEvents(value: TrainingRunDetail): DiagnosisWorksheet
 function loadLocalWorksheet(): DiagnosisWorksheetSnapshot | null {
   try {
     const raw = localStorage.getItem(`uav-learning-latest:v1:${auth.user?.id ?? 'guest'}`)
-    return raw ? JSON.parse(raw) as DiagnosisWorksheetSnapshot : null
+    if (!raw) return null
+    const value = JSON.parse(raw) as DiagnosisWorksheetSnapshot
+    return value.userId == null || value.userId === auth.user?.id ? value : null
   } catch { return null }
 }
 
-onMounted(async () => {
-  await auth.initialize()
+async function loadReview(): Promise<void> {
+  const generation = ++reviewLoadGeneration
+  loading.value = true
+  error.value = ''
+  detail.value = null
+  worksheet.value = null
   try {
     if (runId.value) {
-      detail.value = auth.user?.role === 'student'
+      const loaded = auth.user?.role === 'student'
         ? await studentTrainingApi.runDetail(runId.value)
         : await teacherApi.runDetail(runId.value)
-      const resultWorksheet = detail.value.run.result?.diagnosis_worksheet
-      worksheet.value = latestWorksheetFromEvents(detail.value)
+      if (generation !== reviewLoadGeneration) return
+      detail.value = loaded
+      const resultWorksheet = loaded.run.result?.diagnosis_worksheet
+      worksheet.value = latestWorksheetFromEvents(loaded)
         ?? (resultWorksheet && typeof resultWorksheet === 'object' ? resultWorksheet as DiagnosisWorksheetSnapshot : null)
-        ?? loadLocalWorksheet()
     } else {
       worksheet.value = loadLocalWorksheet()
     }
   } catch (caught) {
+    if (generation !== reviewLoadGeneration) return
     error.value = caught instanceof Error ? caught.message : '训练复盘读取失败。'
   } finally {
-    loading.value = false
+    if (generation === reviewLoadGeneration) loading.value = false
   }
+}
+
+onMounted(async () => {
+  await auth.initialize()
+  reviewReady.value = true
+  await loadReview()
 })
+
+watch(runId, () => { if (reviewReady.value) void loadReview() })
 </script>
 
 <style scoped>
-.review-page{min-height:calc(100vh - 104px);padding:26px clamp(18px,4vw,60px) 50px;background:radial-gradient(circle at 15% 0%,rgba(55,132,218,.12),transparent 32%),linear-gradient(180deg,#f5f9fd,#edf3f8);color:#203852}.review-hero{max-width:1400px;margin:0 auto 16px;display:flex;justify-content:space-between;align-items:end}.review-hero span,.card-head span{font-size:8px;letter-spacing:.14em;color:#3678ba;font-weight:850}.review-hero h1{margin:5px 0 4px;font-size:28px}.review-hero p{margin:0;color:#74869a;font-size:10px}.review-role{display:grid;gap:2px;padding:9px 13px;border:1px solid #cdddeb;border-radius:10px;background:#fff}.review-role small{font-size:7px;color:#8190a0}.review-role b{font-size:10px}.review-state{max-width:1400px;margin:30px auto;padding:30px;text-align:center;border:1px dashed #cfdae6;border-radius:12px;background:#fff;color:#718297}.review-state.error{color:#ac493f}.review-grid{max-width:1400px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:13px}.review-card{padding:16px;border:1px solid #d9e4ee;border-radius:14px;background:rgba(255,255,255,.96);box-shadow:0 10px 28px rgba(23,49,78,.05)}.card-head{display:flex;align-items:start;justify-content:space-between;gap:12px}.card-head h2{margin:4px 0 0;font-size:16px}.card-head>strong{font-size:32px;color:#2775bd}.card-head em{padding:5px 8px;border-radius:999px;background:#fff1e8;color:#a66a30;font-size:8px;font-style:normal}.card-head em.ok{background:#eaf8f1;color:#25764c}.result-card{grid-column:1/-1}.result-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px}.result-strip div,.score-grid div{display:grid;gap:3px;padding:10px;border:1px solid #e1e9f1;border-radius:9px;background:#f8fafc}.result-strip small,.score-grid small{font-size:7px;color:#7c8b9d}.result-strip b,.score-grid b{font-size:12px}.stage-strip{display:flex;gap:7px;margin-top:10px}.stage-strip span{padding:5px 8px;border-radius:999px;background:#f2f4f7;color:#7b8795;font-size:8px;font-weight:800}.stage-strip span.ok{background:#e8f8ef;color:#26784d}.worksheet-list{display:grid;gap:8px;margin-top:13px}.worksheet-list article{display:grid;grid-template-columns:24px 1fr;gap:8px;padding:9px;border:1px solid #e0e8f0;border-radius:9px;background:#fbfdff}.worksheet-list i{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:#e8f2fd;color:#2e70b7;font-style:normal;font-size:8px;font-weight:850}.worksheet-list small{font-size:7px;color:#78889a}.worksheet-list p{margin:3px 0 0;font-size:9px;line-height:1.55}.score-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:13px}.score-card ul{margin:12px 0 0;padding-left:18px;color:#52677e;font-size:9px;line-height:1.65}.timeline{display:grid;gap:8px;margin-top:13px;max-height:400px;overflow:auto}.timeline article{display:grid;grid-template-columns:8px 100px 1fr;gap:8px;align-items:start}.timeline article>i{width:7px;height:7px;margin-top:4px;border-radius:50%;background:#3b88d2}.timeline time{font-size:7px;color:#8391a1}.timeline article div{display:grid}.timeline article b{font-size:9px}.timeline article small{margin-top:2px;color:#75869a;font-size:7px;line-height:1.5}.empty{padding:24px;text-align:center;color:#8a97a6;font-size:9px}.transfer-card{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:20px;border-color:#bcdac9;background:linear-gradient(135deg,#f1fbf6,#fff)}.transfer-card span{font-size:8px;color:#39805b;font-weight:850}.transfer-card h2{margin:5px 0;font-size:15px}.transfer-card p{max-width:900px;margin:0;color:#61786b;font-size:9px;line-height:1.6}.transfer-card a{flex:0 0 auto;padding:9px 13px;border-radius:8px;background:#2e7b55;color:#fff;text-decoration:none;font-size:9px;font-weight:850}@media(max-width:850px){.review-grid{grid-template-columns:1fr}.result-card,.transfer-card{grid-column:1}.result-strip{grid-template-columns:1fr 1fr}.transfer-card{align-items:start;flex-direction:column}}
+.review-page{height:100%;min-height:0;overflow:auto;padding:26px clamp(18px,4vw,60px) 50px;background:radial-gradient(circle at 15% 0%,rgba(55,132,218,.12),transparent 32%),linear-gradient(180deg,#f5f9fd,#edf3f8);color:#203852}.review-hero{max-width:1400px;margin:0 auto 16px;display:flex;justify-content:space-between;align-items:end}.review-hero span,.card-head span{font-size:8px;letter-spacing:.14em;color:#3678ba;font-weight:850}.review-hero h1{margin:5px 0 4px;font-size:28px}.review-hero p{margin:0;color:#74869a;font-size:10px}.review-role{display:grid;gap:2px;padding:9px 13px;border:1px solid #cdddeb;border-radius:10px;background:#fff}.review-role small{font-size:7px;color:#8190a0}.review-role b{font-size:10px}.review-state{max-width:1400px;margin:30px auto;padding:30px;text-align:center;border:1px dashed #cfdae6;border-radius:12px;background:#fff;color:#718297}.review-state.error{color:#ac493f}.review-grid{max-width:1400px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:13px}.review-card{padding:16px;border:1px solid #d9e4ee;border-radius:14px;background:rgba(255,255,255,.96);box-shadow:0 10px 28px rgba(23,49,78,.05)}.card-head{display:flex;align-items:start;justify-content:space-between;gap:12px}.card-head h2{margin:4px 0 0;font-size:16px}.card-head>strong{font-size:32px;color:#2775bd}.card-head em{padding:5px 8px;border-radius:999px;background:#fff1e8;color:#a66a30;font-size:8px;font-style:normal}.card-head em.ok{background:#eaf8f1;color:#25764c}.result-card{grid-column:1/-1}.result-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px}.result-strip div,.score-grid div{display:grid;gap:3px;padding:10px;border:1px solid #e1e9f1;border-radius:9px;background:#f8fafc}.result-strip small,.score-grid small{font-size:7px;color:#7c8b9d}.result-strip b,.score-grid b{font-size:12px}.stage-strip{display:flex;gap:7px;margin-top:10px}.stage-strip span{padding:5px 8px;border-radius:999px;background:#f2f4f7;color:#7b8795;font-size:8px;font-weight:800}.stage-strip span.ok{background:#e8f8ef;color:#26784d}.worksheet-list{display:grid;gap:8px;margin-top:13px}.worksheet-list article{display:grid;grid-template-columns:24px 1fr;gap:8px;padding:9px;border:1px solid #e0e8f0;border-radius:9px;background:#fbfdff}.worksheet-list i{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:#e8f2fd;color:#2e70b7;font-style:normal;font-size:8px;font-weight:850}.worksheet-list small{font-size:7px;color:#78889a}.worksheet-list p{margin:3px 0 0;font-size:9px;line-height:1.55}.score-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:13px}.score-card ul{margin:12px 0 0;padding-left:18px;color:#52677e;font-size:9px;line-height:1.65}.timeline{display:grid;gap:8px;margin-top:13px;max-height:400px;overflow:auto}.timeline article{display:grid;grid-template-columns:8px 100px 1fr;gap:8px;align-items:start}.timeline article>i{width:7px;height:7px;margin-top:4px;border-radius:50%;background:#3b88d2}.timeline time{font-size:7px;color:#8391a1}.timeline article div{display:grid}.timeline article b{font-size:9px}.timeline article small{margin-top:2px;color:#75869a;font-size:7px;line-height:1.5}.empty{padding:24px;text-align:center;color:#8a97a6;font-size:9px}.transfer-card{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:20px;border-color:#bcdac9;background:linear-gradient(135deg,#f1fbf6,#fff)}.transfer-card span{font-size:8px;color:#39805b;font-weight:850}.transfer-card h2{margin:5px 0;font-size:15px}.transfer-card p{max-width:900px;margin:0;color:#61786b;font-size:9px;line-height:1.6}.transfer-card a{flex:0 0 auto;padding:9px 13px;border-radius:8px;background:#2e7b55;color:#fff;text-decoration:none;font-size:9px;font-weight:850}@media(max-width:850px){.review-grid{grid-template-columns:1fr}.result-card,.transfer-card{grid-column:1}.result-strip{grid-template-columns:1fr 1fr}.transfer-card{align-items:start;flex-direction:column}}
 </style>

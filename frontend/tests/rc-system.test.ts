@@ -5,6 +5,7 @@ import {
   normalizeRcInput,
   validateRcDraft,
 } from '../src/utils/rc'
+import { readFileSync } from 'node:fs'
 
 describe('RC system workbench', () => {
   it('accepts the recommended four-channel mapping', () => {
@@ -34,5 +35,14 @@ describe('RC system workbench', () => {
     expect(flat.RC1_DZ).toBeUndefined()
     expect(flat.RC1_MIN).toBe(1000)
     expect(flat.RC1_REV).toBe(1)
+  })
+
+  it('renders a pointer-driven Mode 2 transmitter while keeping precise input optional', () => {
+    const source = readFileSync(new URL('../src/views/Debugging.vue', import.meta.url), 'utf8')
+    expect(source).toContain("startVirtualStick('left', $event)")
+    expect(source).toContain("startVirtualStick('right', $event)")
+    expect(source).toContain('左摇杆油门松手保持')
+    expect(source).toContain('<details>')
+    expect(source).toContain("setVirtualRolePwm('throttle', 1000)")
   })
 })

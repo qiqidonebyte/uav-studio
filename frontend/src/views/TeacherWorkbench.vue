@@ -273,6 +273,10 @@ const publishing = ref(false)
 const latestClass = ref<ClassroomView | null>(null)
 const classForm = reactive({ name: '', academic_year: '' })
 const assignmentForm = reactive({ class_id: 0, scenario_id: '', title: '', description: '', due_at: '', flight_validation: true })
+let assignmentRequestGeneration = 0
+let runRequestGeneration = 0
+let studentRequestGeneration = 0
+let detailRequestGeneration = 0
 
 const tabs = [
   { key: 'overview' as const, icon: '▦', label: '教学总览', hint: '班级与任务状态' },
@@ -357,17 +361,39 @@ async function downloadGradebook(): Promise<void> {
   } catch (caught) { showNotice(apiError(caught)) } finally { exporting.value = false }
 }
 
-async function refreshAssignments(): Promise<void> { assignments.value = await teacherApi.assignments(assignmentClassFilter.value || undefined) }
-async function refreshRuns(): Promise<void> {
-  runs.value = await teacherApi.runs({
-    class_id: runAssignmentFilter.value ? undefined : (runClassFilter.value || undefined),
-    assignment_id: runAssignmentFilter.value || undefined,
-    status: runStatusFilter.value || undefined,
-  })
+async function refreshAssignments(): Promise<void> {
+  const generation = ++assignmentRequestGeneration
+  try {
+    const value = await teacherApi.assignments(assignmentClassFilter.value || undefined)
+    if (generation === assignmentRequestGeneration) assignments.value = value
+  } catch (caught) { showNotice(apiError(caught)) }
 }
-async function refreshStudents(): Promise<void> { students.value = await teacherApi.students(studentClassFilter.value || undefined) }
+async function refreshRuns(): Promise<void> {
+  const generation = ++runRequestGeneration
+  try {
+    const value = await teacherApi.runs({
+      class_id: runAssignmentFilter.value ? undefined : (runClassFilter.value || undefined),
+      assignment_id: runAssignmentFilter.value || undefined,
+      status: runStatusFilter.value || undefined,
+    })
+    if (generation === runRequestGeneration) runs.value = value
+  } catch (caught) { showNotice(apiError(caught)) }
+}
+async function refreshStudents(): Promise<void> {
+  const generation = ++studentRequestGeneration
+  try {
+    const value = await teacherApi.students(studentClassFilter.value || undefined)
+    if (generation === studentRequestGeneration) students.value = value
+  } catch (caught) { showNotice(apiError(caught)) }
+}
 async function openAssignmentRuns(item: AssignmentView): Promise<void> { activeTab.value = 'runs'; runAssignmentFilter.value = item.id; await refreshRuns() }
-async function openRunDetail(id: number): Promise<void> { runDetail.value = await teacherApi.runDetail(id) }
+async function openRunDetail(id: number): Promise<void> {
+  const generation = ++detailRequestGeneration
+  try {
+    const value = await teacherApi.runDetail(id)
+    if (generation === detailRequestGeneration) runDetail.value = value
+  } catch (caught) { showNotice(apiError(caught)) }
+}
 async function changeUserRole(item: AdminUserView, event: Event): Promise<void> {
   const value = (event.target as HTMLSelectElement).value as 'student' | 'teacher'
   try { const updated = await teacherApi.updateRole(item.id, value); Object.assign(item, updated); showNotice(`已将 ${item.display_name} 设置为${roleText(value)}`) }

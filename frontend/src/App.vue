@@ -181,4 +181,5 @@ onBeforeUnmount(() => {
 @media(max-width:1600px){.debug-bridge-chips{display:none}}
 @media(max-width:1500px){.design-switcher .save-pill{display:none}.topbar nav{gap:4px}.topbar nav a{padding:0 6px;font-size:9px}}
 @media(max-width:1320px){.brand-mainline span{display:none}.user-chip small,.logout-chip{display:none}.brand-copy small{max-width:150px}}
+@media(max-width:1200px){.topbar{grid-template-columns:180px minmax(0,1fr) auto;padding:0 10px;gap:8px}.topbar nav{min-width:0;justify-content:flex-start;overflow-x:auto;scrollbar-width:none}.topbar nav::-webkit-scrollbar{display:none}.status-pill.info,.design-switcher-copy small{display:none}}
 </style>

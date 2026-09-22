@@ -33,7 +33,7 @@
             <div class="task-meta"><div><span>建议时间</span><b>{{ item.recommended_minutes }} min</b></div><div><span>截止</span><b>{{ dueText(item.due_at) }}</b></div></div>
             <div v-if="item.run_status === 'completed'" class="completed-result"><span>已完成</span><b>{{ scoreText(item.score) }}<em>/100</em></b><small>用时 {{ durationText(item.elapsed_seconds) }}</small></div>
             <div v-else-if="item.run_status !== 'not_started'" class="progress-state"><i></i><span>{{ trainingStatusText(item.run_stage || item.run_status) }} · 已记录 {{ durationText(item.elapsed_seconds) }}</span></div>
-            <button :disabled="startingId === item.id" @click="startAssignment(item)">{{ startingId === item.id ? '正在进入…' : taskActionText(item) }}</button>
+            <button :disabled="startingId !== null" @click="startAssignment(item)">{{ startingId === item.id ? '正在进入…' : taskActionText(item) }}</button>
           </article>
         </div>
       </section>
@@ -81,6 +81,7 @@ async function joinClass(): Promise<void> {
 }
 
 async function startAssignment(item: StudentAssignmentView): Promise<void> {
+  if (startingId.value !== null) return
   startingId.value = item.id
   try {
     if (item.run_status === 'completed' && item.run_id) {

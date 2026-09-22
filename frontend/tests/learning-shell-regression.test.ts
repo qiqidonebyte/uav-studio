@@ -26,4 +26,15 @@ describe('Learning Guide V1 页面收口', () => {
     expect(workbench).toContain('grid-template-rows: 56px auto minmax(0, 1fr)')
     expect(`${workbench}\n${safeTheme}`).not.toContain('calc(100vh - 56px)')
   })
+
+  it('keeps long debugging and review pages inside the app content row', () => {
+    const debugging = source('../src/views/Debugging.vue')
+    const review = source('../src/views/LearningReview.vue')
+    expect(debugging).toContain('height:100%')
+    expect(debugging).toContain('min-height:0')
+    expect(debugging).not.toContain('height:calc(100vh - 58px)')
+    expect(debugging).not.toContain('min-height:720px')
+    expect(review).toContain('.review-page{height:100%;min-height:0;overflow:auto;')
+    expect(review).not.toContain('min-height:calc(100vh - 104px)')
+  })
 })
