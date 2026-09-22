@@ -61,7 +61,7 @@ body,
 }
 
 .workbench-grid {
-  height: calc(100vh - 56px);
+  height: 100%;
   padding: 12px;
   grid-template-columns: 276px minmax(0, 1fr) 320px;
   grid-template-rows: minmax(460px, 1fr) 240px;
@@ -255,7 +255,7 @@ body,
 
 .simple-page,
 .history-page {
-  height: calc(100vh - 56px);
+  height: 100%;
   padding: 24px;
 }
 

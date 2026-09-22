@@ -1,4 +1,9 @@
-from backend.px4.bridge import Px4Bridge, decode_sensor_health
+import math
+from types import SimpleNamespace
+
+import pytest
+
+from backend.px4.bridge import Px4Bridge, Px4BridgeError, decode_sensor_health
 
 
 def test_bridge_status_is_available_without_live_px4():
@@ -57,3 +62,27 @@ def test_scaled_imu_and_pressure_are_normalized_for_browser_contract():
     assert telemetry["magnetometer"]["field_strength_gauss"] == 0.5
     assert telemetry["barometer"]["absolute_pressure_hpa"] == 1008.4
     assert telemetry["barometer"]["temperature_c"] == 26.75
+
+
+def test_stop_all_motors_sends_disarmed_value_to_every_output(monkeypatch):
+    bridge = Px4Bridge("udpin:0.0.0.0:14540")
+    calls = []
+    monkeypatch.setattr("backend.px4.bridge.mavutil", SimpleNamespace(
+        mavlink=SimpleNamespace(MAV_CMD_ACTUATOR_TEST=310),
+    ))
+    monkeypatch.setattr(bridge, "telemetry", lambda: {"armed": False})
+    monkeypatch.setattr(bridge, "_command", lambda command, params, timeout: calls.append((command, params, timeout)) or {"accepted": True})
+
+    result = bridge.stop_all_motors()
+
+    assert result["accepted"] is True
+    assert len(calls) == 4
+    assert [call[1][4] for call in calls] == [101.0, 102.0, 103.0, 104.0]
+    assert all(math.isnan(call[1][0]) for call in calls)
+
+
+def test_stop_all_motors_rejects_armed_vehicle(monkeypatch):
+    bridge = Px4Bridge("udpin:0.0.0.0:14540")
+    monkeypatch.setattr(bridge, "telemetry", lambda: {"armed": True})
+    with pytest.raises(Px4BridgeError, match="已解锁"):
+        bridge.stop_all_motors()

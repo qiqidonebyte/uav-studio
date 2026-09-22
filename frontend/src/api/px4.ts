@@ -168,6 +168,7 @@ export const px4Api = {
     method: 'POST',
     body: JSON.stringify({ value, timeout_s: timeoutS }),
   }),
+  stopMotors: () => request<{ accepted: boolean; motors: Px4CommandResult[] }>('/motors/stop', { method: 'POST' }),
   getParameter: (name: string) => request<{ name: string; value: number; type: number }>(`/parameters/${encodeURIComponent(name)}`),
   setParameter: (name: string, value: number) => request<{ name: string; value: number; type: number }>(`/parameters/${encodeURIComponent(name)}`, {
     method: 'PUT',

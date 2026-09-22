@@ -587,6 +587,28 @@ class Px4Bridge:
             "timeout_s": timeout_s,
         }
 
+    def stop_all_motors(self) -> dict[str, Any]:
+        """Exit actuator-test output for M1-M4 while the vehicle is disarmed."""
+        if self.telemetry()["armed"]:
+            raise Px4BridgeError("飞机已解锁，禁止从动力测试页发送停止测试命令；请先安全降落并上锁")
+        command = int(getattr(mavutil.mavlink, "MAV_CMD_ACTUATOR_TEST", 310))
+        results: list[dict[str, Any]] = []
+        for motor_index in range(1, 5):
+            output_function = 100 + motor_index
+            # PX4 actuator_test defines NaN as disarmed/stop for the selected
+            # output function. A short timeout prevents stale test ownership.
+            result = self._command(
+                command,
+                [float("nan"), 0.2, 0.0, 0.0, float(output_function), 0.0, 0.0],
+                timeout=3.0,
+            )
+            results.append({
+                **result,
+                "motor": f"M{motor_index}",
+                "output_function": output_function,
+            })
+        return {"accepted": all(item.get("accepted", True) is not False for item in results), "motors": results}
+
     def calibrate_sensor(self, sensor: str) -> dict[str, Any]:
         if mavutil is None:
             raise Px4BridgeError("pymavlink 未安装，请先执行 pip install -r requirements.txt")

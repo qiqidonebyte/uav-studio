@@ -13,10 +13,10 @@
 
       <nav>
         <RouterLink v-if="authStore.user?.role === 'student'" to="/training">我的实训</RouterLink>
-        <RouterLink to="/assembly">无人机装配</RouterLink>
-        <RouterLink to="/debugging">系统调试</RouterLink>
-        <RouterLink to="/flight">飞行实验</RouterLink>
-        <RouterLink to="/review">训练复盘</RouterLink>
+        <RouterLink :to="navTarget('/assembly')">无人机装配</RouterLink>
+        <RouterLink :to="navTarget('/debugging')">系统调试</RouterLink>
+        <RouterLink :to="navTarget('/flight')">飞行实验</RouterLink>
+        <RouterLink :to="navTarget('/review')">训练复盘</RouterLink>
         <RouterLink to="/history">实验记录</RouterLink>
         <RouterLink to="/components">组件库</RouterLink>
         <RouterLink v-if="isTeacherRole" to="/teacher">教师工作台</RouterLink>
@@ -51,7 +51,9 @@
       </div>
     </header>
     <LearningTaskNav :role="learningRole" @open-guide="guideOpen = true" />
-    <RouterView />
+    <main class="app-content">
+      <RouterView />
+    </main>
     <LearningGuidePanel :open="guideOpen" :role="learningRole" @close="guideOpen = false" />
   </div>
 </template>
@@ -66,6 +68,7 @@ import { useSettingsStore } from './stores/settings'
 import LearningTaskNav from './components/LearningTaskNav.vue'
 import LearningGuidePanel from './components/LearningGuidePanel.vue'
 import type { LearningRole } from './utils/learningGuide'
+import { activeTrainingContext, clearTrainingContext, trainingAwareTarget } from './utils/trainingContext'
 
 const router = useRouter()
 const route = useRoute()
@@ -86,6 +89,7 @@ const roleLabel = computed(() => {
 })
 
 const isTeacherRole = computed(() => ['teacher', 'admin'].includes(String(authStore.user?.role ?? 'student')))
+const navTarget = (path: string) => trainingAwareTarget(path, route.query)
 
 const saveTitle = computed(() => {
   if (assemblyStore.saveStatus === 'saving') return '设计正在自动保存到本地 SQLite'
@@ -106,6 +110,7 @@ async function initializeWorkspace(): Promise<void> {
 
 async function logout(): Promise<void> {
   simulationStore.resetForLogout()
+  clearTrainingContext()
   try {
     await authStore.logout()
   } finally {
@@ -119,6 +124,7 @@ function onAuthExpired(): void {
   if (!authStore.authenticated) return
   authStore.clearSession()
   simulationStore.resetForLogout()
+  clearTrainingContext()
   assemblyStore.resetWorkspace()
   settingsStore.resetForLogout()
   void router.replace({ path: '/login', query: { expired: '1' } })
@@ -130,7 +136,11 @@ watch(
   { immediate: true },
 )
 
-watch(() => route.fullPath, () => { guideOpen.value = false })
+watch(() => route.fullPath, () => {
+  guideOpen.value = false
+  if (route.path === '/training') clearTrainingContext()
+  else activeTrainingContext(route.query)
+}, { immediate: true })
 
 onMounted(() => {
   globalThis.addEventListener?.('uav-auth-expired', onAuthExpired)

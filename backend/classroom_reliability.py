@@ -511,6 +511,11 @@ def register_classroom_reliability_routes(
             raise HTTPException(status_code=422, detail="motor 必须为 M1-M4")
         return bridge_action(lambda: slot.bridge.test_motor(int(motor_name[1]), command.value, command.timeout_s))
 
+    @app.post("/api/training/runs/{run_id}/px4/motors/stop")
+    def stop_motors(run_id: int, session: Session = Depends(get_db), current_user: UserRecord = Depends(get_current_user)) -> Any:
+        slot = action_slot(run_id, session, current_user)
+        return bridge_action(slot.bridge.stop_all_motors)
+
     @app.get("/api/training/runs/{run_id}/px4/parameters/{name}")
     def read_parameter(run_id: int, name: str, session: Session = Depends(get_db), current_user: UserRecord = Depends(get_current_user)) -> Any:
         slot = action_slot(run_id, session, current_user)

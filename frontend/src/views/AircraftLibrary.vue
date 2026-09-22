@@ -428,7 +428,7 @@ function templateIcon(key: string): string {
 
 <style scoped>
 .aircraft-library-page {
-  height: calc(100vh - 56px);
+  height: 100%;
   overflow: auto;
   padding: 28px clamp(22px, 4vw, 64px) 48px;
   background:

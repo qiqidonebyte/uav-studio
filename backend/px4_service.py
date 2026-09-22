@@ -220,6 +220,11 @@ def motor_test(motor: str, request: MotorTestRequest) -> dict[str, Any]:
     return run(lambda: bridge.test_motor(int(motor_name[1]), request.value, request.timeout_s))
 
 
+@app.post("/api/px4/motors/stop")
+def stop_motors() -> dict[str, Any]:
+    return run(bridge.stop_all_motors)
+
+
 @app.get("/api/px4/parameters/{name}")
 def read_parameter(name: str) -> dict[str, Any]:
     return run(lambda: bridge.get_parameter(name))

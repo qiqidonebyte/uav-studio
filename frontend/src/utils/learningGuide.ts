@@ -1,4 +1,5 @@
 import type { RouteLocationNormalizedLoaded, RouteLocationRaw } from 'vue-router'
+import { activeTrainingQuery } from './trainingContext'
 
 export type LearningRole = 'student' | 'teacher' | 'admin'
 export type LearningStageKey = 'prepare' | 'assembly' | 'debug' | 'diagnosis' | 'preflight' | 'flight' | 'review'
@@ -42,12 +43,7 @@ function firstQuery(route: RouteLocationNormalizedLoaded, key: string): string {
 }
 
 function carryTrainingQuery(route: RouteLocationNormalizedLoaded): Record<string, string> {
-  const query: Record<string, string> = {}
-  for (const key of ['run', 'scenario', 'assignment']) {
-    const value = firstQuery(route, key)
-    if (value) query[key] = value
-  }
-  return query
+  return activeTrainingQuery(route.query)
 }
 
 export function learningStageForRoute(route: RouteLocationNormalizedLoaded): LearningStageKey {
@@ -69,8 +65,8 @@ export function learningStageTarget(
 ): RouteLocationRaw {
   const trainingQuery = carryTrainingQuery(route)
   if (stage === 'prepare') return role === 'student' ? '/training' : '/teacher'
-  if (stage === 'assembly') return '/assembly'
-  if (stage === 'debug') return '/debugging'
+  if (stage === 'assembly') return Object.keys(trainingQuery).length ? { path: '/assembly', query: trainingQuery } : '/assembly'
+  if (stage === 'debug') return Object.keys(trainingQuery).length ? { path: '/debugging', query: trainingQuery } : '/debugging'
   if (stage === 'diagnosis') return { path: '/debugging', query: { ...trainingQuery, guide: 'diagnosis' } }
   if (stage === 'preflight') return { path: '/debugging', query: { ...trainingQuery, section: 'preflight' } }
   if (stage === 'flight') return { path: '/flight', query: trainingQuery }

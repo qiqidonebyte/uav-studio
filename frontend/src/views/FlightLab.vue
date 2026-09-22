@@ -200,12 +200,12 @@
       <div v-if="!assemblyReady && !assemblyStore.loading" class="stage-blocker">
         <b>装配检查未通过</b>
         <span>请返回无人机装配页处理阻断错误后再进行飞行实验。</span>
-        <RouterLink to="/assembly">返回无人机装配</RouterLink>
+        <RouterLink :to="assemblyRoute">返回无人机装配</RouterLink>
       </div>
       <div v-else-if="!preflightReady && !assemblyStore.loading" class="stage-blocker preflight-blocker">
         <b>起飞前检查未通过或许可已失效</b>
         <span>飞行实验要求先完成飞控传感器、遥控、动力、安全设置与 Pre-Arm 六项门禁。</span>
-        <RouterLink to="/debugging">返回系统调试 / 起飞前检查</RouterLink>
+        <RouterLink :to="debuggingRoute">返回系统调试 / 起飞前检查</RouterLink>
       </div>
       <div v-else-if="px4Mode && !px4Connected" :class="['stage-status-banner', px4SessionView.tone]" data-testid="px4-session-status">
         <b>{{ px4SessionView.title }}</b>
@@ -313,11 +313,14 @@ import { aircraftFingerprint, loadPreflightSnapshot, type PreflightSnapshot } fr
 import { landedStateText, px4IsAirborne, px4TelemetryToFrame } from '../utils/px4Flight'
 import { px4SessionPresentation } from '../utils/px4Session'
 import { flightValidationReady } from '../utils/trainingFlow'
+import { trainingAwareTarget } from '../utils/trainingContext'
 
 const route = useRoute()
 const assemblyStore = useAssemblyStore()
 const store = useSimulationStore()
 const settingsStore = useSettingsStore()
+const assemblyRoute = computed(() => trainingAwareTarget('/assembly', route.query))
+const debuggingRoute = computed(() => trainingAwareTarget('/debugging', route.query))
 
 const viewMode = ref<'3d' | 'map' | 'split'>(settingsStore.settings.flight.default_view)
 const busy = ref(false)

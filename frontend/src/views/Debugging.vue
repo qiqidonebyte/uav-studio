@@ -484,12 +484,13 @@
                   v-for="motor in motorNames"
                   :key="motor"
                   :class="['motor-test', { active: commandedMotor === motor }]"
-                  :disabled="motorTestBusy"
+                  :disabled="motorTestBusy || px4Armed"
+                  :title="px4Armed ? '动力测试要求飞机保持上锁并固定在地面' : `测试 ${motor}`"
                   @click="testMotor(motor)"
                 >
                   <span>▶</span> 测试 {{ motor }}
                 </button>
-                <button class="stop-all" @click="stopAllMotors"><span>■</span> 全部停止</button>
+                <button class="stop-all" :disabled="px4Armed" @click="stopAllMotors"><span>■</span> 全部停止</button>
               </div>
             </div>
           </section>
@@ -1022,6 +1023,7 @@ const rcObservedMin = ref<number[]>(Array(18).fill(Number.POSITIVE_INFINITY))
 const rcObservedMax = ref<number[]>(Array(18).fill(Number.NEGATIVE_INFINITY))
 let timer: number | undefined
 let stopTimer: number | undefined
+let motorTestGeneration = 0
 let px4PollTimer: number | undefined
 let pollingPx4 = false
 let logId = 0
@@ -1916,7 +1918,7 @@ function switchScenario(next: ScenarioKey): void {
   safetyLoadedOnce.value = false
   calibrationState.value = { gyro: 'idle', accelerometer: 'idle', compass: 'idle', barometer: 'idle' }
   calibrationMessage.value = { gyro: '', accelerometer: '', compass: '', barometer: '' }
-  stopAllMotors()
+  resetMotorVisuals()
   if (!trainingInternalMutation) {
     appendLog(`切换训练场景：${scenarios.find(item => item.key === next)?.title ?? next}`, bridgeMode.value === 'live' ? '真实 PX4 模式不注入前端故障；场景仅保留教学说明' : '场景状态已重新初始化', 'info')
   }
@@ -1941,9 +1943,8 @@ async function pollPx4(): Promise<void> {
         requestedStreams.value = true
         void px4Api.requestStreams().catch(() => { requestedStreams.value = false })
       }
-      if (!motorTestBusy.value && telemetry.motors.outputs.length >= 4) {
-        motorOutputs.value = telemetry.motors.outputs.slice(0, 4).map(value => Math.max(0, Math.min(1, value))) as MotorVector
-      }
+      // The power page is a ground test bench. Ambient PX4 flight outputs must
+      // never drive its digital propellers; only an explicit motor test may do so.
     } else {
       bridgeMode.value = 'demo'
       bridgeError.value = telemetry.running ? 'Bridge 已启动，等待 PX4 Heartbeat (UDP 14540)' : (telemetry.last_error || 'PX4 Bridge 未运行')
@@ -2596,55 +2597,73 @@ async function verifySafetyConfiguration(): Promise<void> {
 }
 
 async function testMotor(command: MotorName): Promise<void> {
-  if (motorTestBusy.value) return
+  if (motorTestBusy.value || px4Armed.value) return
+  const generation = ++motorTestGeneration
+  if (stopTimer) window.clearTimeout(stopTimer)
   motorTestBusy.value = true
   commandedMotor.value = command
 
-  if (bridgeMode.value === 'live' && !trainingHasInjection('motor_mapping')) {
-    actualMotor.value = command
-    const outputs: MotorVector = [0, 0, 0, 0]
-    outputs[motorIndex[command]] = .25
-    motorOutputs.value = outputs
-    appendLog(`执行 ${command} PX4 单电机测试`, '发送 MAV_CMD_ACTUATOR_TEST，输出 25%', 'info')
-    try {
+  try {
+    if (bridgeMode.value === 'live' && !trainingHasInjection('motor_mapping')) {
+      actualMotor.value = command
+      const outputs: MotorVector = [0, 0, 0, 0]
+      outputs[motorIndex[command]] = .25
+      motorOutputs.value = outputs
+      appendLog(`执行 ${command} PX4 单电机测试`, '发送 MAV_CMD_ACTUATOR_TEST，输出 25%', 'info')
       await px4Api.testMotor(command, .25, 1.5)
+      if (generation !== motorTestGeneration) return
       motorVerified.value = { ...motorVerified.value, [command]: true }
       invalidatePreflightPermit()
       appendLog(`${command} 测试指令已接受`, 'PX4 执行机构测试由 SIH 飞控实际处理', 'success')
-    } catch (error) {
-      appendLog(`${command} 测试失败`, errorText(error), 'error')
-    }
-  } else {
-    const actual = resolveMotorResponse(scenario.value, mappingRepaired.value, command)
-    actualMotor.value = actual
-    const outputs: MotorVector = [0, 0, 0, 0]
-    outputs[motorIndex[actual]] = .62
-    motorOutputs.value = outputs
-    appendLog(`执行 ${command} 单电机测试`, trainingHasInjection('motor_mapping') && bridgeMode.value === 'live' ? `案例使用教学映射注入，不向真实 PX4 发送执行机构指令（${command} 62%）` : `发送 ${command} 教学测试指令（62%）`, 'info')
-    if (actual !== command) {
-      motorVerified.value = { ...motorVerified.value, [command]: false }
-      invalidatePreflightPermit()
-      appendLog(`检测到 ${actual} 异常响应`, `${command} 指令触发后，实际 ${actual} 数字旋翼转动`, 'error')
     } else {
-      motorVerified.value = { ...motorVerified.value, [command]: true }
-      invalidatePreflightPermit()
-      appendLog(`${command} 响应正确`, `${command} 编号与当前映射一致`, 'success')
+      const actual = resolveMotorResponse(scenario.value, mappingRepaired.value, command)
+      actualMotor.value = actual
+      const outputs: MotorVector = [0, 0, 0, 0]
+      outputs[motorIndex[actual]] = .62
+      motorOutputs.value = outputs
+      appendLog(`执行 ${command} 单电机测试`, trainingHasInjection('motor_mapping') && bridgeMode.value === 'live' ? `案例使用教学映射注入，不向真实 PX4 发送执行机构指令（${command} 62%）` : `发送 ${command} 教学测试指令（62%）`, 'info')
+      if (actual !== command) {
+        motorVerified.value = { ...motorVerified.value, [command]: false }
+        invalidatePreflightPermit()
+        appendLog(`检测到 ${actual} 异常响应`, `${command} 指令触发后，实际 ${actual} 数字旋翼转动`, 'error')
+      } else {
+        motorVerified.value = { ...motorVerified.value, [command]: true }
+        invalidatePreflightPermit()
+        appendLog(`${command} 响应正确`, `${command} 编号与当前映射一致`, 'success')
+      }
+    }
+    stopTimer = window.setTimeout(() => {
+      if (generation === motorTestGeneration) resetMotorVisuals()
+    }, 1800)
+  } catch (error) {
+    if (generation === motorTestGeneration) {
+      appendLog(`${command} 测试失败`, errorText(error), 'error')
+      resetMotorVisuals()
     }
   }
-
-  if (stopTimer) window.clearTimeout(stopTimer)
-  stopTimer = window.setTimeout(() => {
-    motorOutputs.value = [0, 0, 0, 0]
-    actualMotor.value = null
-    motorTestBusy.value = false
-  }, 1800)
 }
 
-function stopAllMotors(): void {
+function resetMotorVisuals(): void {
+  motorTestGeneration += 1
   if (stopTimer) window.clearTimeout(stopTimer)
+  stopTimer = undefined
   motorOutputs.value = [0, 0, 0, 0]
+  commandedMotor.value = null
   actualMotor.value = null
   motorTestBusy.value = false
+}
+
+async function stopAllMotors(): Promise<void> {
+  const stopLivePx4 = bridgeMode.value === 'live' && !trainingHasInjection('motor_mapping')
+  resetMotorVisuals()
+  appendLog('全部停止', '数字旋翼输出已立即归零', 'info')
+  if (!stopLivePx4) return
+  try {
+    await px4Api.stopMotors()
+    appendLog('PX4 动力测试已停止', 'M1–M4 已退出执行机构测试模式', 'success')
+  } catch (error) {
+    appendLog('PX4 停止命令失败', errorText(error), 'error')
+  }
 }
 
 function repairMotorMapping(): void {
@@ -2653,7 +2672,7 @@ function repairMotorMapping(): void {
     return
   }
   mappingRepaired.value = true
-  stopAllMotors()
+  resetMotorVisuals()
   appendLog('学生修改电机映射参数', '将 M1–M4 映射恢复为理论顺序', 'warn')
   window.setTimeout(() => {
     commandedMotor.value = 'M1'

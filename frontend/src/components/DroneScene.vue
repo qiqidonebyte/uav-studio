@@ -801,7 +801,9 @@ function ingestTelemetryFrame(frame: TelemetryFrame): void {
   flightSmoothing.targetPosition.copy(pose.position)
   flightSmoothing.targetQuaternion.setFromEuler(pose.rotation)
   flightSmoothing.targetCg.copy(simulationVectorToThree(frame.center_of_gravity))
-  flightSmoothing.targetThrusts = [...frame.motors.thrusts_n]
+  flightSmoothing.targetThrusts = props.grounded
+    ? [...frame.motors.outputs]
+    : [...frame.motors.thrusts_n]
   flightSmoothing.targetGravityN = frame.forces.gravity_n
 
   const radians = (frame.wind.direction_deg * Math.PI) / 180
@@ -821,6 +823,14 @@ function ingestTelemetryFrame(frame: TelemetryFrame): void {
     vehicleGroup.position.copy(flightSmoothing.renderedPosition)
     vehicleGroup.quaternion.copy(flightSmoothing.renderedQuaternion)
     flightSmoothing.initialized = true
+  } else if (props.grounded) {
+    // A ground test bench must react immediately to Stop. Flight smoothing is
+    // useful in the air, but would make a stopped propeller keep coasting.
+    flightSmoothing.renderedPosition.copy(flightSmoothing.targetPosition)
+    flightSmoothing.renderedQuaternion.copy(flightSmoothing.targetQuaternion)
+    flightSmoothing.renderedThrusts = [...flightSmoothing.targetThrusts]
+    vehicleGroup.position.copy(flightSmoothing.renderedPosition)
+    vehicleGroup.quaternion.copy(flightSmoothing.renderedQuaternion)
   }
 
   if (!props.grounded) addTrajectoryPoint(pose.position.clone())
@@ -828,6 +838,13 @@ function ingestTelemetryFrame(frame: TelemetryFrame): void {
 
 function advanceSmoothedFlight(dt: number): void {
   if (!props.telemetry || !flightSmoothing.initialized) return
+
+  if (props.grounded) {
+    vehicleGroup.position.copy(flightSmoothing.targetPosition)
+    vehicleGroup.quaternion.copy(flightSmoothing.targetQuaternion)
+    flightSmoothing.renderedThrusts = [...flightSmoothing.targetThrusts]
+    return
+  }
 
   const positionAlpha = 1 - Math.exp(-dt * 11)
   const rotationAlpha = 1 - Math.exp(-dt * 13)

@@ -386,7 +386,7 @@ function selectById(id: number): void {
 </script>
 
 <style scoped>
-.library-page { height: calc(100vh - 56px); display:grid; grid-template-rows:72px minmax(0,1fr); padding:12px; gap:12px; overflow:hidden; }
+.library-page { height: 100%; display:grid; grid-template-rows:72px minmax(0,1fr); padding:12px; gap:12px; overflow:hidden; }
 .library-head { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:0 4px; }
 .library-head h2 { margin:0; color:#17283f; font-size:20px; }.library-head p { margin:4px 0 0; color:#708096; font-size:11px; }
 .library-head-actions { display:flex; align-items:center; gap:8px; }.library-search { width:260px; border:1px solid #d8e2ee; border-radius:7px; background:#fff; padding:9px 10px; font-size:11px; outline:none; }.library-search:focus{border-color:#75a5eb;box-shadow:0 0 0 2px rgba(37,99,235,.07)}

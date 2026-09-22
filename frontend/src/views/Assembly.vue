@@ -332,7 +332,7 @@
         <RouterLink
           v-if="store.validation.passed"
           class="launch-link"
-          to="/debugging"
+          :to="debuggingRoute"
         >
           进入系统调试
         </RouterLink>
@@ -357,6 +357,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import ComponentCard from '../components/ComponentCard.vue'
 import DroneScene from '../components/DroneScene.vue'
 import { useAssemblyStore } from '../stores/assembly'
@@ -379,8 +380,11 @@ import {
   type AssemblySlot,
   type AssemblyStep,
 } from '../utils/assembly'
+import { trainingAwareTarget } from '../utils/trainingContext'
 
+const route = useRoute()
 const store = useAssemblyStore()
+const debuggingRoute = computed(() => trainingAwareTarget('/debugging', route.query))
 const activeStepIndex = ref(0)
 const candidateSelections = reactive<Partial<Record<AssemblySlot, number>>>({})
 const spatialDiagnostics = ref<SpatialDiagnostic[]>([])

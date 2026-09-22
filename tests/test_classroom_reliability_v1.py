@@ -201,6 +201,29 @@ def test_student_cannot_operate_another_students_slot(tmp_path, monkeypatch):
     assert forbidden.status_code == 403
 
 
+def test_student_can_stop_all_motors_only_on_owned_slot(tmp_path, monkeypatch):
+    fake_px4(monkeypatch)
+    client, _, _ = build_client(tmp_path)
+    assert client.post("/api/training/runs/1000/px4/session", headers=headers(100)).status_code == 200
+    slot = session_manager.slot_for_run(1000)
+    assert slot is not None
+    called = []
+
+    def stop_all_motors():
+        called.append(True)
+        return {"accepted": True, "motors": [{"motor": f"M{index}"} for index in range(1, 5)]}
+
+    monkeypatch.setattr(slot.bridge, "stop_all_motors", stop_all_motors)
+    stopped = client.post("/api/training/runs/1000/px4/motors/stop", headers=headers(100))
+    assert stopped.status_code == 200
+    assert stopped.json()["accepted"] is True
+    assert len(stopped.json()["motors"]) == 4
+    assert called == [True]
+
+    forbidden = client.post("/api/training/runs/1000/px4/motors/stop", headers=headers(101))
+    assert forbidden.status_code == 403
+
+
 def test_backend_restart_requeues_runtime_sessions_without_losing_run(tmp_path, monkeypatch):
     fake_px4(monkeypatch)
     client, factory, _ = build_client(tmp_path)
