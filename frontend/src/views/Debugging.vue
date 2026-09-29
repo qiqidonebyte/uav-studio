@@ -784,7 +784,7 @@
             <span>六项门禁仅为课堂演示模拟完成，不代表飞机真实检查通过。飞行页将使用本地教学仿真，不会连接 PX4。</span>
             <button @click="exitTeacherDemo">退出演示模式</button>
           </section>
-          <section v-else-if="auth.user?.role === 'teacher'" class="surface teacher-demo-entry">
+          <section v-else-if="auth.user?.role === 'teacher' || auth.user?.role === 'admin'" class="surface teacher-demo-entry">
             <div><b>课堂演示</b><span>需要讲解飞行模块时，可临时模拟完成六项门禁。不会更改学生成绩或真实调试状态。</span></div>
             <button @click="startTeacherDemo">一键补全（教师演示）</button>
           </section>
@@ -2848,7 +2848,7 @@ function invalidatePreflightPermit(): void {
 }
 
 function startTeacherDemo(): void {
-  if (auth.user?.role !== 'teacher') return
+  if (auth.user?.role !== 'teacher' && auth.user?.role !== 'admin') return
   const checkedAt = new Date().toISOString()
   const checks = actualPreflightChecks.value.map(item => ({
     key: item.key,

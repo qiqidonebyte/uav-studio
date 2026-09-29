@@ -33,6 +33,7 @@ describe('preflight gate', () => {
     }
 
     expect(isTeacherDemoSnapshot(snapshot, 'teacher')).toBe(true)
+    expect(isTeacherDemoSnapshot(snapshot, 'admin')).toBe(true)
     expect(isTeacherDemoSnapshot(snapshot, 'student')).toBe(false)
     expect(isTeacherDemoSnapshot({ ...snapshot, bridge_mode: 'live' }, 'teacher')).toBe(false)
     expect(isTeacherDemoSnapshot({ ...snapshot, passed: false }, 'teacher')).toBe(false)

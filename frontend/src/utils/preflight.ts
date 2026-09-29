@@ -23,7 +23,7 @@ export function isTeacherDemoSnapshot(
   snapshot: PreflightSnapshot | null | undefined,
   role: string | null | undefined,
 ): boolean {
-  return role === 'teacher'
+  return (role === 'teacher' || role === 'admin')
     && snapshot?.passed === true
     && snapshot.scenario === 'teacher_demo'
     && snapshot.bridge_mode === 'demo'
