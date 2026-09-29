@@ -779,11 +779,21 @@
 
       <template v-else-if="activeSection === 'preflight'">
         <div class="preflight-workbench">
+          <section v-if="teacherDemoActive" class="surface teacher-demo-notice" role="status">
+            <b>教师演示模式已开启</b>
+            <span>六项门禁仅为课堂演示模拟完成，不代表飞机真实检查通过。飞行页将使用本地教学仿真，不会连接 PX4。</span>
+            <button @click="exitTeacherDemo">退出演示模式</button>
+          </section>
+          <section v-else-if="auth.user?.role === 'teacher'" class="surface teacher-demo-entry">
+            <div><b>课堂演示</b><span>需要讲解飞行模块时，可临时模拟完成六项门禁。不会更改学生成绩或真实调试状态。</span></div>
+            <button @click="startTeacherDemo">一键补全（教师演示）</button>
+          </section>
           <section class="surface preflight-hero" :class="{ ready: preflightReady, blocked: !preflightReady }">
             <div class="preflight-hero-copy">
               <span class="preflight-kicker">FINAL PRE-FLIGHT GATE</span>
               <h2>起飞前检查与飞行许可</h2>
-              <p>汇总装配、传感器、遥控、动力、安全设置与 PX4 Pre-Arm 结果。所有阻断项处理完成并执行最终检查后，才生成本架飞机的飞行许可。</p>
+              <p v-if="teacherDemoActive">当前为教师演示状态：门禁显示模拟完成，只用于进入本地飞行仿真讲解，不代表实际起飞许可。</p>
+              <p v-else>汇总装配、传感器、遥控、动力、安全设置与 PX4 Pre-Arm 结果。所有阻断项处理完成并执行最终检查后，才生成本架飞机的飞行许可。</p>
             </div>
             <div class="preflight-permit">
               <span :class="['permit-ring', preflightReady ? 'pass' : 'block']">{{ preflightReady ? '✓' : '!' }}</span>
@@ -795,7 +805,7 @@
           <section class="surface preflight-check-surface">
             <div class="surface-heading">
               <div><span class="heading-icon">☑</span><b>六项起飞门禁</b></div>
-              <span :class="['preflight-count-pill', preflightReady ? 'ok' : 'warn']">{{ preflightPassedCount }}/{{ preflightChecks.length }} 通过</span>
+              <span :class="['preflight-count-pill', preflightReady ? 'ok' : 'warn']">{{ preflightPassedCount }}/{{ preflightChecks.length }} {{ teacherDemoActive ? '演示完成' : '通过' }}</span>
             </div>
             <div class="preflight-check-grid">
               <article v-for="item in preflightChecks" :key="item.key" :class="['preflight-check-card', item.state]">
@@ -835,12 +845,14 @@
 
           <section class="surface preflight-final-surface">
             <div class="preflight-final-copy">
-              <b>{{ preflightPermitValid ? '飞行许可已生成' : '尚未生成飞行许可' }}</b>
-              <small v-if="preflightPermitValid">检查时间：{{ preflightSavedAtText }}。许可仅对当前飞机配置有效，配置变化或超过 1 小时后自动失效。</small>
+              <b>{{ teacherDemoActive ? '教师演示许可已生成' : preflightPermitValid ? '飞行许可已生成' : '尚未生成飞行许可' }}</b>
+              <small v-if="teacherDemoActive">开启时间：{{ preflightSavedAtText }}。这是临时教学状态，不代表真实检查通过。</small>
+              <small v-else-if="preflightPermitValid">检查时间：{{ preflightSavedAtText }}。许可仅对当前飞机配置有效，配置变化或超过 1 小时后自动失效。</small>
               <small v-else>{{ preflightMessage || '先完成六项门禁，再执行最终检查。' }}</small>
             </div>
             <div class="preflight-final-actions">
-              <button :disabled="preflightBusy" @click="runFinalPreflight">{{ preflightBusy ? '检查中…' : '执行最终起飞检查' }}</button>
+              <button v-if="teacherDemoActive" @click="exitTeacherDemo">退出演示模式</button>
+              <button v-else :disabled="preflightBusy" @click="runFinalPreflight">{{ preflightBusy ? '检查中…' : '执行最终起飞检查' }}</button>
               <RouterLink v-if="preflightPermitValid" class="preflight-flight-button" :to="flightRoute">进入飞行验证</RouterLink>
               <button v-else class="preflight-flight-button disabled" disabled>进入飞行验证</button>
             </div>
@@ -986,7 +998,7 @@ import type { MotorVector, TelemetryFrame } from '../types/telemetry'
 import { calculateDebugScore, resolveMotorResponse, type DebugScenario } from '../utils/debugging'
 import { calculateSafetyScore, recommendedSafetyProfile, safetyParamKeys, unsafeDemoSafetyProfile, validateSafetyDraft, type SafetyDraft, type SafetyParamKey } from '../utils/safety'
 import { calculateRcScore, cloneRcDraft, defaultRcDraft, flattenRcDraft, normalizeRcInput, rcMapParams, rcRoleLabels, rcRoles, validateRcDraft, type RcDraft, type RcRole } from '../utils/rc'
-import { aircraftFingerprint, clearPreflightSnapshot, loadPreflightSnapshot, preflightScore, savePreflightSnapshot, type PreflightCheckRecord, type PreflightSnapshot } from '../utils/preflight'
+import { aircraftFingerprint, clearPreflightSnapshot, isTeacherDemoSnapshot, loadPreflightSnapshot, preflightScore, savePreflightSnapshot, type PreflightCheckRecord, type PreflightSnapshot } from '../utils/preflight'
 import { px4SessionPresentation } from '../utils/px4Session'
 import { loadFaultTrainingCases, scoreFaultTraining, trainingCategoryText, trainingDifficultyText, type FaultTrainingCase, type TrainingCategory, type TrainingEvaluation } from '../utils/training'
 import { centeredPwm, releasedStickValues, resolvedVirtualRcChannel, throttlePwm, virtualStickPoint, type VirtualStickSide } from '../utils/virtualRc'
@@ -1304,7 +1316,7 @@ const engineeringGatePassed = computed(() => Boolean(
   && engineering.value.battery_continuous_margin_a >= 0
 ))
 const allMotorsVerified = computed(() => motorNames.every(motor => motorVerified.value[motor]))
-const preflightChecks = computed<Array<PreflightCheckRecord & { detail: string; section?: SectionKey }>>(() => [
+const actualPreflightChecks = computed<Array<PreflightCheckRecord & { detail: string; section?: SectionKey }>>(() => [
   {
     key: 'assembly', title: '数字装配 / 工程校核',
     state: engineeringGatePassed.value ? 'pass' : 'block',
@@ -1342,15 +1354,30 @@ const preflightChecks = computed<Array<PreflightCheckRecord & { detail: string; 
     detail: prearmMessage.value,
   },
 ])
+const preflightSnapshotMatches = computed(() => Boolean(
+  preflightSnapshot.value?.passed
+  && preflightSnapshot.value.aircraft_id === (assemblyStore.activeAircraftId ?? null)
+  && preflightSnapshot.value.aircraft_fingerprint === aircraftFingerprint(assemblyStore.aircraft)
+))
+const teacherDemoActive = computed(() => Boolean(
+  isTeacherDemoSnapshot(preflightSnapshot.value, auth.user?.role)
+  && preflightSnapshotMatches.value
+))
+const preflightChecks = computed(() => teacherDemoActive.value
+  ? actualPreflightChecks.value.map(item => ({
+      ...item,
+      state: 'pass' as const,
+      summary: '教师演示：模拟完成',
+      detail: '临时课堂演示状态，不代表真实检查结果。',
+    }))
+  : actualPreflightChecks.value)
 const preflightBlockers = computed(() => preflightChecks.value.filter(item => item.state === 'block'))
 const preflightWarnings = computed(() => preflightChecks.value.filter(item => item.state === 'warn'))
 const preflightPassedCount = computed(() => preflightChecks.value.filter(item => item.state === 'pass').length)
 const preflightReady = computed(() => preflightBlockers.value.length === 0 && preflightWarnings.value.length === 0)
 const preflightScoreValue = computed(() => preflightScore(preflightChecks.value))
-const preflightPermitValid = computed(() => Boolean(
-  preflightSnapshot.value?.passed
-  && preflightSnapshot.value.aircraft_id === (assemblyStore.activeAircraftId ?? null)
-  && preflightSnapshot.value.aircraft_fingerprint === aircraftFingerprint(assemblyStore.aircraft)
+const preflightPermitValid = computed(() => preflightSnapshotMatches.value && (
+  preflightSnapshot.value?.scenario !== 'teacher_demo' || teacherDemoActive.value
 ))
 const preflightSavedAtText = computed(() => preflightSnapshot.value?.checked_at
   ? new Date(preflightSnapshot.value.checked_at).toLocaleString('zh-CN', { hour12: false })
@@ -2820,7 +2847,42 @@ function invalidatePreflightPermit(): void {
   }
 }
 
+function startTeacherDemo(): void {
+  if (auth.user?.role !== 'teacher') return
+  const checkedAt = new Date().toISOString()
+  const checks = actualPreflightChecks.value.map(item => ({
+    key: item.key,
+    title: item.title,
+    state: 'pass' as const,
+    summary: '教师演示：模拟完成',
+  }))
+  const snapshot: PreflightSnapshot = {
+    version: 1,
+    aircraft_id: assemblyStore.activeAircraftId ?? null,
+    aircraft_fingerprint: aircraftFingerprint(assemblyStore.aircraft),
+    passed: true,
+    score: 100,
+    checked_at: checkedAt,
+    bridge_mode: 'demo',
+    scenario: 'teacher_demo',
+    checks,
+  }
+  savePreflightSnapshot(snapshot)
+  preflightSnapshot.value = snapshot
+  preflightMessage.value = '教师演示状态已开启，仅用于本地教学仿真。'
+  appendLog('开启教师演示模式', '六项起飞门禁显示模拟完成；不会写入学生成绩，也不会连接 PX4。', 'info')
+}
+
+function exitTeacherDemo(): void {
+  if (!teacherDemoActive.value) return
+  clearPreflightSnapshot(assemblyStore.activeAircraftId)
+  preflightSnapshot.value = null
+  preflightMessage.value = '已退出教师演示模式；真实检查状态未修改。'
+  appendLog('退出教师演示模式', '已清除临时演示许可，真实检查状态保持不变。', 'info')
+}
+
 async function runFinalPreflight(): Promise<void> {
+  if (teacherDemoActive.value) return
   if (preflightBusy.value) return
   preflightBusy.value = true
   preflightMessage.value = ''
@@ -2998,7 +3060,7 @@ onMounted(async () => {
     trainingCatalogError.value = errorText(error)
   }
   preflightSnapshot.value = loadPreflightSnapshot(assemblyStore.activeAircraftId, aircraftFingerprint(assemblyStore.aircraft))
-  restorePreflightVerification(preflightSnapshot.value)
+  if (preflightSnapshot.value?.scenario !== 'teacher_demo') restorePreflightVerification(preflightSnapshot.value)
   timer = window.setInterval(() => { clockTick.value += 1 }, 100)
   px4PollTimer = window.setInterval(() => { void pollPx4() }, 300)
   window.addEventListener('blur', releaseActiveVirtualStick)
@@ -3248,5 +3310,6 @@ td:first-child { color:#45baff;font-weight:800; }
 .diagnosis-worksheet-shell{margin:0 0 12px;border:1px solid rgba(85,217,255,.22);border-radius:9px;background:rgba(8,29,46,.86);overflow:hidden}.diagnosis-worksheet-shell.complete{border-color:rgba(72,223,139,.3)}.diagnosis-worksheet-shell.expanded{background:rgba(7,24,39,.96)}.diagnosis-worksheet-summary{width:100%;min-height:54px;display:grid;grid-template-columns:32px minmax(220px,1fr) minmax(130px,220px) 68px;gap:10px;align-items:center;padding:9px 12px;border:0;background:transparent;color:#dcecf8;text-align:left;cursor:pointer}.diagnosis-worksheet-summary:hover{background:rgba(40,168,255,.06)}.worksheet-summary-icon{display:grid;place-items:center;width:30px;height:30px;border-radius:7px;background:rgba(40,168,255,.12);color:#63d9ff;font-size:15px}.worksheet-summary-copy{display:grid;gap:3px}.worksheet-summary-copy b{font-size:10px}.worksheet-summary-copy small{color:#7897b0;font-size:8px;line-height:1.4}.worksheet-summary-progress{display:grid;grid-template-columns:minmax(70px,1fr) 28px;gap:8px;align-items:center}.worksheet-summary-progress>i{height:5px;overflow:hidden;border-radius:99px;background:#17344c}.worksheet-summary-progress em{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#2f91dd,#38d39a)}.worksheet-summary-progress b{color:#99bdd3;font-size:8px;text-align:right}.complete .worksheet-summary-progress b{color:#66dfa0}.worksheet-summary-action{justify-self:end;color:#68cfff;font-size:8px;font-weight:800}.diagnosis-worksheet-content{padding:0 10px 10px}.diagnosis-worksheet-content :deep(.diagnosis-worksheet){margin:0;box-shadow:none}@media(max-width:980px){.diagnosis-worksheet-summary{grid-template-columns:32px 1fr 58px}.worksheet-summary-progress{display:none}}
 .training-library-backdrop{position:fixed;z-index:1000;inset:58px 0 0;display:grid;place-items:center;padding:26px;background:rgba(2,9,16,.72);backdrop-filter:blur(6px)}.training-library-panel{width:min(1180px,94vw);max-height:86vh;overflow:auto;border:1px solid rgba(85,217,255,.25);border-radius:14px;background:linear-gradient(180deg,#0a1b2b,#071420);box-shadow:0 28px 80px rgba(0,0,0,.42);color:#dcecf8}.training-library-panel>header{display:flex;justify-content:space-between;gap:20px;padding:22px 24px 16px;border-bottom:1px solid rgba(88,137,176,.15)}.training-library-panel header>div>span{color:#53d8ff;font-size:8px;font-weight:800;letter-spacing:.16em}.training-library-panel h2{margin:5px 0 6px;font-size:22px}.training-library-panel p{margin:0;color:#7694ad;font-size:10px}.training-close{width:34px;height:34px;border:1px solid rgba(113,155,190,.2);border-radius:8px;background:rgba(255,255,255,.04);color:#a8c2d6;font-size:22px;cursor:pointer}.training-filter-row{display:flex;gap:7px;padding:14px 24px}.training-filter-row button{padding:6px 12px;border:1px solid rgba(89,139,180,.2);border-radius:999px;background:rgba(8,29,47,.65);color:#7898b2;font-size:8px;cursor:pointer}.training-filter-row button.active{border-color:rgba(85,217,255,.45);background:rgba(29,126,179,.18);color:#82e4ff}.training-case-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding:0 24px 24px}.training-case-card{display:grid;gap:11px;padding:15px;border:1px solid rgba(91,143,183,.18);border-radius:10px;background:rgba(7,24,39,.8);box-shadow:0 8px 22px rgba(0,0,0,.12)}.training-case-card:hover{border-color:rgba(85,217,255,.32);transform:translateY(-1px)}.training-case-card-head{display:grid;grid-template-columns:34px 1fr auto;gap:9px;align-items:center}.training-case-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:8px;background:rgba(40,168,255,.11);color:#61dcff;font-size:17px}.training-case-card-head div{display:grid;gap:2px}.training-case-card-head small{color:#6586a2;font-size:7px}.training-case-card-head b{color:#e6f3fb;font-size:11px}.training-case-card-head strong{color:#efc45a;font-size:10px;letter-spacing:1px}.training-case-card>p{min-height:35px;margin:0;color:#8aa5bb;font-size:9px;line-height:1.55}.training-case-card dl{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0}.training-case-card dl div{padding:7px 8px;border-radius:6px;background:rgba(4,17,29,.7)}.training-case-card dt{color:#63839d;font-size:6px}.training-case-card dd{margin:3px 0 0;color:#bbd3e4;font-size:8px}.training-case-task{display:grid;gap:3px;padding:8px 9px;border-left:2px solid rgba(85,217,255,.36);background:rgba(20,75,108,.12)}.training-case-task b{color:#65dcff;font-size:7px}.training-case-task span{color:#839eb4;font-size:8px;line-height:1.5}.training-start-button{min-height:34px;border:1px solid #249fdc;border-radius:7px;background:linear-gradient(180deg,#168fd0,#0e6d9f);color:white;font-size:9px;font-weight:700;cursor:pointer}.training-start-button:hover{filter:brightness(1.08)}
 @media(max-width:1400px){.training-task-hud{grid-template-columns:1fr 1fr}.training-task-actions{grid-column:1/-1;grid-template-columns:repeat(4,1fr)}.training-case-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:980px){.training-case-grid{grid-template-columns:1fr}.training-task-meta{grid-template-columns:1fr 1fr}}
+.teacher-demo-entry,.teacher-demo-notice{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:13px 16px;border-color:rgba(240,189,69,.34);background:rgba(83,62,15,.2)}.teacher-demo-entry>div{display:grid;gap:4px}.teacher-demo-entry b,.teacher-demo-notice b{color:#f2cf75;font-size:11px}.teacher-demo-entry span,.teacher-demo-notice span{color:#b7a879;font-size:9px;line-height:1.5}.teacher-demo-entry button,.teacher-demo-notice button{flex:none;padding:8px 12px;border:1px solid rgba(240,189,69,.4);border-radius:7px;background:rgba(240,189,69,.12);color:#f5d888;font-weight:700;cursor:pointer}
 
 </style>

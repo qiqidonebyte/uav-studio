@@ -11,6 +11,8 @@ dist/
 .DS_Store
 *.log
 data/uavstudio.db
+data/uavstudio.db-shm
+data/uavstudio.db-wal
 data/simulations/*.json
 !data/simulations/.gitkeep
 frontend/test-results/

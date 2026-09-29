@@ -19,6 +19,16 @@ export interface PreflightSnapshot {
   checks: PreflightCheckRecord[]
 }
 
+export function isTeacherDemoSnapshot(
+  snapshot: PreflightSnapshot | null | undefined,
+  role: string | null | undefined,
+): boolean {
+  return role === 'teacher'
+    && snapshot?.passed === true
+    && snapshot.scenario === 'teacher_demo'
+    && snapshot.bridge_mode === 'demo'
+}
+
 const PREFIX = 'uavstudio.preflight.v1'
 export const PREFLIGHT_MAX_AGE_MS = 60 * 60 * 1000
 

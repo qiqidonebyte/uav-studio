@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aircraftFingerprint, loadPreflightSnapshot, preflightScore, savePreflightSnapshot, type PreflightCheckRecord } from '../src/utils/preflight'
+import { aircraftFingerprint, isTeacherDemoSnapshot, loadPreflightSnapshot, preflightScore, savePreflightSnapshot, type PreflightCheckRecord, type PreflightSnapshot } from '../src/utils/preflight'
 
 describe('preflight gate', () => {
   it('scores six passing gates at 100', () => {
@@ -17,5 +17,25 @@ describe('preflight gate', () => {
 
   it('fingerprint changes when aircraft configuration changes', () => {
     expect(aircraftFingerprint({ id: 1, motor_id: 2 })).not.toBe(aircraftFingerprint({ id: 1, motor_id: 3 }))
+  })
+
+  it('only enables the local demo permit for a passed teacher demo snapshot', () => {
+    const snapshot: PreflightSnapshot = {
+      version: 1,
+      aircraft_id: 1,
+      aircraft_fingerprint: '{}',
+      passed: true,
+      score: 100,
+      checked_at: new Date().toISOString(),
+      bridge_mode: 'demo',
+      scenario: 'teacher_demo',
+      checks: [],
+    }
+
+    expect(isTeacherDemoSnapshot(snapshot, 'teacher')).toBe(true)
+    expect(isTeacherDemoSnapshot(snapshot, 'student')).toBe(false)
+    expect(isTeacherDemoSnapshot({ ...snapshot, bridge_mode: 'live' }, 'teacher')).toBe(false)
+    expect(isTeacherDemoSnapshot({ ...snapshot, passed: false }, 'teacher')).toBe(false)
+    expect(isTeacherDemoSnapshot({ ...snapshot, scenario: 'standard' }, 'teacher')).toBe(false)
   })
 })

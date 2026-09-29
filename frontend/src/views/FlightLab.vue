@@ -3,6 +3,11 @@
     <aside class="panel left-panel flight-control-panel">
       <section class="panel-section">
         <h3>{{ px4Mode ? 'PX4 飞行验证' : '实验控制' }}</h3>
+        <div v-if="teacherDemoMode" class="course-flight-banner">
+          <b>教师演示模式 · 本地教学仿真</b>
+          <small>门禁为模拟完成，不代表真实检查或放飞许可。当前不会连接 PX4。</small>
+          <RouterLink :to="debuggingRoute">返回起飞前检查并退出演示</RouterLink>
+        </div>
         <div v-if="assignedRunId" :class="['course-flight-banner', { passed: flightValidationReported }]">
           <b>{{ flightValidationReported ? '课程飞行验证已记录' : '课程实训 · 飞行验证阶段' }}</b>
           <small>{{ flightValidationMessage || '按 解锁 → 起飞 → 悬停 → 降落 完成闭环，系统将自动回写 TrainingRun。' }}</small>
@@ -138,8 +143,8 @@
           <div><dt>名称</dt><dd>{{ assemblyStore.aircraftName }}</dd></div>
           <div><dt>构型</dt><dd>四旋翼 X 型</dd></div>
           <div><dt>总质量</dt><dd>{{ massText }}</dd></div>
-          <div><dt>装配状态</dt><dd :class="assemblyReady ? 'ok-text' : 'warn-text'">{{ assemblyReady ? '已通过' : '未通过' }}</dd></div>
-          <div><dt>起飞前检查</dt><dd :class="preflightReady ? 'ok-text' : 'warn-text'">{{ preflightReady ? '已通过' : '未通过' }}</dd></div>
+          <div><dt>装配状态</dt><dd :class="assemblyReady || teacherDemoMode ? 'ok-text' : 'warn-text'">{{ teacherDemoMode ? '演示放行（未实测）' : assemblyReady ? '已通过' : '未通过' }}</dd></div>
+          <div><dt>起飞前检查</dt><dd :class="preflightReady ? 'ok-text' : 'warn-text'">{{ teacherDemoMode ? '演示完成（未实测）' : preflightReady ? '已通过' : '未通过' }}</dd></div>
           <div><dt>飞行数据源</dt><dd>{{ dataSourceText }}</dd></div>
           <div><dt>遥测连接</dt><dd :class="connectionText.includes('已连接') ? 'ok-text' : ''">{{ connectionText }}</dd></div>
         </dl>
@@ -197,7 +202,7 @@
         </div>
       </div>
 
-      <div v-if="!assemblyReady && !assemblyStore.loading" class="stage-blocker">
+      <div v-if="!assemblyReady && !teacherDemoMode && !assemblyStore.loading" class="stage-blocker">
         <b>装配检查未通过</b>
         <span>请返回无人机装配页处理阻断错误后再进行飞行实验。</span>
         <RouterLink :to="assemblyRoute">返回无人机装配</RouterLink>
@@ -304,18 +309,20 @@ import LocalFlightMap from '../components/LocalFlightMap.vue'
 import RealtimeCharts from '../components/RealtimeCharts.vue'
 import { px4Api, type Px4CommandResult, type Px4Status, type Px4Telemetry } from '../api/px4'
 import { studentTrainingApi } from '../api/teacher'
+import { useAuthStore } from '../stores/auth'
 import { useAssemblyStore } from '../stores/assembly'
 import { useSimulationStore } from '../stores/simulation'
 import { useSettingsStore } from '../stores/settings'
 import type { TelemetryFrame } from '../types/telemetry'
 import { flightControlAvailability } from '../utils/flightControlGuards'
-import { aircraftFingerprint, loadPreflightSnapshot, type PreflightSnapshot } from '../utils/preflight'
+import { aircraftFingerprint, isTeacherDemoSnapshot, loadPreflightSnapshot, type PreflightSnapshot } from '../utils/preflight'
 import { landedStateText, px4IsAirborne, px4TelemetryToFrame } from '../utils/px4Flight'
 import { px4SessionPresentation } from '../utils/px4Session'
 import { flightValidationReady } from '../utils/trainingFlow'
 import { trainingAwareTarget } from '../utils/trainingContext'
 
 const route = useRoute()
+const auth = useAuthStore()
 const assemblyStore = useAssemblyStore()
 const store = useSimulationStore()
 const settingsStore = useSettingsStore()
@@ -350,8 +357,12 @@ const flightValidationReporting = ref(false)
 const flightValidationMessage = ref('')
 
 const assemblyReady = computed(() => assemblyStore.validation.passed && assemblyStore.engineering !== null)
-const preflightReady = computed(() => Boolean(preflightSnapshot.value?.passed))
-const flightReady = computed(() => assemblyReady.value && preflightReady.value)
+const teacherDemoMode = computed(() => isTeacherDemoSnapshot(preflightSnapshot.value, auth.user?.role))
+const preflightReady = computed(() => Boolean(
+  preflightSnapshot.value?.passed
+  && (preflightSnapshot.value.scenario !== 'teacher_demo' || teacherDemoMode.value)
+))
+const flightReady = computed(() => teacherDemoMode.value || (assemblyReady.value && preflightReady.value))
 const px4Mode = computed(() => preflightSnapshot.value?.bridge_mode === 'live')
 const px4Connected = computed(() => Boolean(px4Telemetry.value?.connected))
 const px4SessionSource = computed<Px4Status | null>(() => px4Telemetry.value ?? px4Status.value)
@@ -443,6 +454,7 @@ const amslText = computed(() => {
 })
 
 onMounted(async () => {
+  await auth.initialize()
   await Promise.all([assemblyStore.initialize(), settingsStore.initialize()])
   preflightSnapshot.value = loadPreflightSnapshot(
     assemblyStore.activeAircraftId,
