@@ -116,6 +116,15 @@ export function px4IsAirborne(telemetry: Px4Telemetry | null | undefined): boole
   return Math.max(0, finite(telemetry.local_position?.z)) > 0.25
 }
 
+export function px4IsStableHover(telemetry: Px4Telemetry | null | undefined): boolean {
+  if (!telemetry?.connected || !px4IsAirborne(telemetry)) return false
+  if (telemetry.landed_state === 3 || telemetry.landed_state === 4) return false
+  const position = telemetry.local_position
+  if (!position || !Number.isFinite(position.z) || position.z < 0.5) return false
+  const horizontalSpeed = Math.hypot(finite(position.vx), finite(position.vy))
+  return horizontalSpeed <= 0.5 && Math.abs(finite(position.vz)) <= 0.25
+}
+
 export function landedStateText(state: number | null | undefined): string {
   if (state === 1) return '地面'
   if (state === 2) return '空中'

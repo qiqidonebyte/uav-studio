@@ -316,7 +316,7 @@ import { useSettingsStore } from '../stores/settings'
 import type { TelemetryFrame } from '../types/telemetry'
 import { flightControlAvailability } from '../utils/flightControlGuards'
 import { aircraftFingerprint, isTeacherDemoSnapshot, loadPreflightSnapshot, type PreflightSnapshot } from '../utils/preflight'
-import { landedStateText, px4IsAirborne, px4TelemetryToFrame } from '../utils/px4Flight'
+import { landedStateText, px4IsAirborne, px4IsStableHover, px4TelemetryToFrame } from '../utils/px4Flight'
 import { px4SessionPresentation } from '../utils/px4Session'
 import { flightValidationReady } from '../utils/trainingFlow'
 import { trainingAwareTarget } from '../utils/trainingContext'
@@ -355,6 +355,7 @@ const flightLandCommanded = ref(false)
 const flightValidationReported = ref(false)
 const flightValidationReporting = ref(false)
 const flightValidationMessage = ref('')
+let hoverStabilityTimer: number | null = null
 
 const assemblyReady = computed(() => assemblyStore.validation.passed && assemblyStore.engineering !== null)
 const teacherDemoMode = computed(() => isTeacherDemoSnapshot(preflightSnapshot.value, auth.user?.role))
@@ -411,7 +412,7 @@ const px4CanLand = computed(() =>
 )
 
 const flightCommandHint = computed(() => {
-  if (!assemblyReady.value) return '先通过装配检查，才能进行飞行验证。'
+  if (!flightReady.value) return '先通过装配检查，才能进行飞行验证。'
   if (!preflightReady.value) return '先完成系统调试页的起飞前检查并生成飞行许可。'
 
   if (px4Mode.value) {
@@ -493,6 +494,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(async () => {
+  if (hoverStabilityTimer !== null) window.clearTimeout(hoverStabilityTimer)
   stopPx4Polling()
   if (!px4Mode.value) {
     if (store.simulationStatus === 'RUNNING') {
@@ -730,10 +732,23 @@ watch(activeAirborne, airborne => {
   if (airborne) flightTakeoffObserved.value = true
   void maybeReportFlightValidation()
 })
-watch(() => activeTelemetry.value.flight_mode, mode => {
-  if (mode === 'HOVERING') flightHoverObserved.value = true
-  void maybeReportFlightValidation()
-})
+watch(
+  () => px4Mode.value
+    ? px4IsStableHover(px4Telemetry.value)
+    : activeTelemetry.value.flight_mode === 'HOVERING',
+  stableHover => {
+    if (hoverStabilityTimer !== null) window.clearTimeout(hoverStabilityTimer)
+    hoverStabilityTimer = null
+    if (stableHover) {
+      hoverStabilityTimer = window.setTimeout(() => {
+        flightHoverObserved.value = true
+        hoverStabilityTimer = null
+        void maybeReportFlightValidation()
+      }, 2000)
+    }
+    void maybeReportFlightValidation()
+  },
+)
 watch(() => activeTelemetry.value.armed, () => { void maybeReportFlightValidation() })
 
 async function applyPendingTarget(): Promise<void> {

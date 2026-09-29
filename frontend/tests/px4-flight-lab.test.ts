@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Px4Telemetry } from '../src/api/px4'
-import { px4FlightMode, px4TelemetryToFrame } from '../src/utils/px4Flight'
+import { px4FlightMode, px4IsStableHover, px4TelemetryToFrame } from '../src/utils/px4Flight'
 
 function telemetry(overrides: Partial<Px4Telemetry> = {}): Px4Telemetry {
   return {
@@ -50,5 +50,18 @@ describe('PX4 flight telemetry adapter', () => {
     const frame = px4TelemetryToFrame(telemetry(), 1, null)
     expect(frame.power.battery_remaining).toBeCloseTo(.8)
     expect(frame.power.estimated_power_w).toBeCloseTo(111)
+  })
+
+  it('counts only connected, low-drift airborne telemetry as a hover candidate', () => {
+    expect(px4IsStableHover(telemetry({ landed_state: 3 }))).toBe(false)
+    expect(px4IsStableHover(telemetry({
+      landed_state: 2,
+      local_position: { x: 0, y: 0, z: 2, vx: 0.1, vy: 0.1, vz: 0.1 },
+    }))).toBe(true)
+    expect(px4IsStableHover(telemetry({
+      landed_state: 2,
+      local_position: { x: 0, y: 0, z: 2, vx: 1.2, vy: 0, vz: 0 },
+    }))).toBe(false)
+    expect(px4IsStableHover(telemetry({ connected: false }))).toBe(false)
   })
 })
