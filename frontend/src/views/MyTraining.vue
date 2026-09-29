@@ -20,12 +20,37 @@
         <article v-for="item in classes" :key="item.class_id"><span>班级</span><b>{{ item.class_name }}</b><small>{{ item.teacher_name }} · {{ formatDate(item.joined_at) }}</small></article>
       </section>
 
+      <section v-if="mockCompetitions.length" class="mock-competition-section">
+        <div class="competition-section-title"><div><h2>模拟比赛</h2><p>按环节顺序完成；每项训练记录会自动汇总到本轮进度。</p></div><span>{{ mockCompetitions.length }} 场</span></div>
+        <article v-for="competition in mockCompetitions" :key="competition.id" class="competition-card">
+          <header class="competition-card-head">
+            <div><span class="competition-kicker">MOCK COMPETITION · {{ competition.class_name }}</span><h3>{{ competition.title }}</h3></div>
+            <b :class="['competition-state', { complete: competition.completed_count === competition.total_cases }]">{{ competition.completed_count === competition.total_cases ? '已完成' : `已完成 ${competition.completed_count}/${competition.total_cases}` }}</b>
+          </header>
+          <div class="competition-metrics">
+            <div><span>目标用时</span><b>{{ competition.total_duration_minutes }} 分钟</b></div>
+            <div><span>累计用时</span><b>{{ durationText(competition.elapsed_seconds) }}</b></div>
+            <div><span>平均得分</span><b>{{ scoreText(competition.average_score) }}</b></div>
+          </div>
+          <div class="competition-progress"><i :style="{ width: `${competition.total_cases ? Math.min(100, competition.completed_count / competition.total_cases * 100) : 0}%` }"></i></div>
+          <ol class="competition-task-list">
+            <li v-for="(item, index) in competition.assignments" :key="item.id" :class="{ locked: !canStartCompetitionTask(competition, item), complete: item.run_status === 'completed', current: competition.next_assignment_id === item.id }">
+              <span class="competition-step-number">{{ index + 1 }}</span>
+              <div class="competition-task-copy"><b>{{ item.scenario_title }}</b><small>{{ item.scenario_id }} · 建议 {{ competitionCaseMinutes(item) }} 分钟{{ item.requires_flight_validation ? ' · 含飞行验证' : '' }}</small></div>
+              <span class="competition-task-result">{{ item.run_status === 'completed' ? `${scoreText(item.score)} 分` : item.run_status === 'not_started' ? '待开始' : trainingStatusText(item.run_stage || item.run_status) }}</span>
+              <button :disabled="startingId !== null || !canStartCompetitionTask(competition, item)" @click="startAssignment(item, competition)">{{ startingId === item.id ? '正在进入…' : item.run_status === 'completed' ? '看复盘' : canStartCompetitionTask(competition, item) ? taskActionText(item) : '完成上一环节后开放' }}</button>
+            </li>
+          </ol>
+          <small class="competition-footnote">本轮用时为各环节平台训练用时之和；目标用时用于限时练习参考，超时后仍可继续完成并复盘。</small>
+        </article>
+      </section>
+
       <section class="assignment-section">
-        <div class="section-title"><div><h2>实训任务</h2><p>开始任务后系统会创建 TrainingRun，并自动记录调试过程。</p></div><span>{{ assignments.length }} 项</span></div>
+        <div class="section-title"><div><h2>实训任务</h2><p>开始任务后系统会创建 TrainingRun，并自动记录调试过程。</p></div><span>{{ regularAssignments.length }} 项</span></div>
         <div v-if="error" class="error">{{ error }}</div>
-        <div v-if="!loading && assignments.length === 0" class="empty">暂时没有实训任务。若尚未加入班级，请先输入邀请码。</div>
+        <div v-if="!loading && regularAssignments.length === 0 && !mockCompetitions.length" class="empty">暂时没有实训任务。若尚未加入班级，请先输入邀请码。</div>
         <div class="assignment-grid">
-          <article v-for="item in assignments" :key="item.id" :class="['assignment-card', item.run_status]">
+          <article v-for="item in regularAssignments" :key="item.id" :class="['assignment-card', item.run_status]">
             <div class="card-top"><span>{{ item.class_name }}</span><b>{{ item.scenario_id }}</b></div>
             <h3>{{ item.title }}</h3>
             <p>{{ item.description || item.scenario_title }}</p>
@@ -44,13 +69,14 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 import { studentTrainingApi } from '../api/teacher'
 import { useAssemblyStore } from '../stores/assembly'
 import type { EnrollmentView, StudentAssignmentView } from '../types/teacher'
 import { buildStudentTrainingRoute, trainingStatusText } from '../utils/trainingFlow'
+import { canStartMockCompetitionAssignment, groupMockCompetitions, mockCompetitionMeta, type MockCompetitionGroup } from '../utils/mockCompetition'
 
 const router = useRouter()
 const assembly = useAssemblyStore()
@@ -60,6 +86,8 @@ const startingId = ref<number | null>(null)
 const inviteCode = ref('')
 const classes = ref<EnrollmentView[]>([])
 const assignments = ref<StudentAssignmentView[]>([])
+const mockCompetitions = computed(() => groupMockCompetitions(assignments.value))
+const regularAssignments = computed(() => assignments.value.filter(item => !mockCompetitionMeta(item.requirements)))
 const error = ref('')
 const notice = ref('')
 
@@ -80,8 +108,9 @@ async function joinClass(): Promise<void> {
   finally { joining.value = false }
 }
 
-async function startAssignment(item: StudentAssignmentView): Promise<void> {
+async function startAssignment(item: StudentAssignmentView, competition?: MockCompetitionGroup): Promise<void> {
   if (startingId.value !== null) return
+  if (competition && !canStartMockCompetitionAssignment(competition, item)) return
   startingId.value = item.id
   try {
     if (item.run_status === 'completed' && item.run_id) {
@@ -94,6 +123,14 @@ async function startAssignment(item: StudentAssignmentView): Promise<void> {
     }))
   } catch (caught) { showNotice(apiError(caught)) }
   finally { startingId.value = null }
+}
+
+function canStartCompetitionTask(competition: MockCompetitionGroup, item: StudentAssignmentView): boolean {
+  return canStartMockCompetitionAssignment(competition, item)
+}
+
+function competitionCaseMinutes(item: StudentAssignmentView): number {
+  return mockCompetitionMeta(item.requirements)?.case_recommended_minutes ?? item.recommended_minutes
 }
 
 
@@ -114,4 +151,5 @@ function showNotice(message: string): void { notice.value = message; window.setT
 
 <style scoped>
 .training-page{height:100%;min-height:0;overflow:auto;padding:26px clamp(20px,4vw,62px) 50px;background:radial-gradient(circle at 12% 0%,rgba(58,136,225,.13),transparent 30%),linear-gradient(180deg,#f5f9fd,#edf3f8);color:#203852}.training-hero{max-width:1440px;margin:0 auto 16px;display:flex;justify-content:space-between;align-items:end}.eyebrow{font-size:9px;color:#3978bd;letter-spacing:.15em;font-weight:800}.training-hero h1{margin:4px 0;font-size:29px}.training-hero p{margin:0;color:#718298;font-size:11px}.refresh{border:1px solid #cbdbea;border-radius:8px;background:#fff;color:#406383;padding:8px 12px;font-size:9px;font-weight:750;cursor:pointer}.training-shell{max-width:1440px;margin:0 auto}.join-card{display:grid;grid-template-columns:minmax(220px,1fr) minmax(220px,360px) 90px;gap:10px;align-items:center;padding:13px 14px;border:1px solid #d9e5f0;border-radius:13px;background:#fff;box-shadow:0 9px 24px rgba(30,53,80,.05)}.join-card>div{display:grid;gap:2px}.join-card b{font-size:11px}.join-card small{font-size:8px;color:#8795a6}.join-card input{border:1px solid #d5e0eb;border-radius:8px;padding:9px 10px;font:inherit;font-size:10px;outline:0;text-transform:uppercase}.join-card button,.assignment-card>button{border:1px solid #2f77c5;border-radius:8px;background:#347fcf;color:white;padding:9px;font-size:9px;font-weight:800;cursor:pointer}.join-card button:disabled,.assignment-card>button:disabled{opacity:.45;cursor:not-allowed}.class-strip{display:flex;gap:8px;margin:10px 0;overflow:auto}.class-strip article{min-width:210px;display:grid;gap:2px;padding:10px 12px;border:1px solid #dce6ef;border-radius:10px;background:rgba(255,255,255,.88)}.class-strip span{font-size:7px;color:#8391a1}.class-strip b{font-size:10px}.class-strip small{font-size:7px;color:#8997a7}.assignment-section{margin-top:18px}.section-title{display:flex;justify-content:space-between;align-items:end;margin-bottom:10px}.section-title h2{margin:0;font-size:16px}.section-title p{margin:3px 0 0;color:#7e8d9f;font-size:9px}.section-title>span{padding:4px 8px;border-radius:999px;background:#eaf3fc;color:#3973ad;font-size:8px;font-weight:800}.assignment-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:12px}.assignment-card{display:flex;flex-direction:column;min-height:315px;padding:14px;border:1px solid #dce6f0;border-radius:14px;background:#fff;box-shadow:0 10px 26px rgba(28,51,78,.05)}.assignment-card.completed{border-color:#bee1ce}.assignment-card.in_progress{border-color:#e8ce91}.card-top{display:flex;justify-content:space-between;color:#7e8e9f;font-size:8px}.card-top b{color:#3778b7}.assignment-card h3{margin:12px 0 5px;font-size:14px}.assignment-card p{min-height:38px;margin:0 0 10px;color:#748397;font-size:9px;line-height:1.55}.case-line{display:grid;grid-template-columns:auto 1fr auto;gap:7px;align-items:center;padding:9px;border-radius:8px;background:#f5f8fb}.case-line span{font-size:7px;color:#8895a5}.case-line b{font-size:9px}.case-line em{color:#e1a52f;font-style:normal;font-size:9px}.task-meta{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0}.task-meta div{display:grid;gap:2px;padding:7px;border:1px solid #e5ebf2;border-radius:7px}.task-meta span{font-size:7px;color:#8a97a6}.task-meta b{font-size:9px}.completed-result{display:grid;grid-template-columns:1fr auto;align-items:center;margin:auto 0 8px;padding:9px;border-radius:8px;background:#edf9f3}.completed-result>span{font-size:8px;color:#3a7d59}.completed-result>b{font-size:18px;color:#26794e}.completed-result em{font-size:8px;font-style:normal}.completed-result small{grid-column:1/-1;font-size:7px;color:#6d8c7b}.progress-state{margin:auto 0 8px;display:flex;align-items:center;gap:7px;padding:8px;border-radius:8px;background:#fff7e6;color:#8e691c;font-size:8px}.progress-state i{width:7px;height:7px;border-radius:50%;background:#e6ad37;box-shadow:0 0 0 4px rgba(230,173,55,.12)}.assignment-card>button{margin-top:auto}.empty,.error{padding:28px;text-align:center;border:1px dashed #d6e1eb;border-radius:10px;color:#8694a4;font-size:9px}.error{color:#aa5149;border-color:#efcfcb;background:#fff8f7}.notice{position:fixed;z-index:80;left:50%;bottom:23px;transform:translateX(-50%);padding:8px 13px;border-radius:999px;background:#213d5c;color:#fff;font-size:9px;box-shadow:0 10px 28px rgba(0,0,0,.16)}@media(max-width:720px){.join-card{grid-template-columns:1fr}.training-hero{align-items:start;flex-direction:column;gap:10px}}
+.mock-competition-section{margin-top:14px;padding:14px;border:1px solid #d4e4f2;border-radius:14px;background:linear-gradient(135deg,#f7fbff,#edf6ff)}.competition-section-title{display:flex;justify-content:space-between;align-items:end;margin-bottom:10px}.competition-section-title h2{margin:0;font-size:16px}.competition-section-title p{margin:3px 0 0;color:#71849a;font-size:9px}.competition-section-title>span{padding:4px 8px;border-radius:999px;background:#dceeff;color:#3973ad;font-size:8px;font-weight:800}.competition-card{margin-top:10px;padding:13px;border:1px solid #d7e4ef;border-radius:12px;background:#fff;box-shadow:0 8px 22px rgba(28,51,78,.04)}.competition-card-head{display:flex;justify-content:space-between;align-items:start;gap:12px}.competition-kicker{font-size:7px;color:#4380b8;letter-spacing:.08em;font-weight:800}.competition-card h3{margin:3px 0 0;font-size:14px}.competition-state{padding:5px 8px;border-radius:999px;background:#fff5df;color:#9b711a;font-size:8px;white-space:nowrap}.competition-state.complete{background:#e9f8ef;color:#347b53}.competition-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:11px 0 8px}.competition-metrics div{display:grid;gap:3px;padding:8px;border:1px solid #e5edf4;border-radius:8px;background:#fbfdff}.competition-metrics span{font-size:7px;color:#8593a3}.competition-metrics b{font-size:11px}.competition-progress{height:5px;overflow:hidden;border-radius:99px;background:#e9f0f6}.competition-progress i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#54a1e8,#3679c5);transition:width .2s}.competition-task-list{display:grid;gap:6px;margin:10px 0 7px;padding:0;list-style:none}.competition-task-list li{display:grid;grid-template-columns:24px minmax(0,1fr) auto auto;gap:9px;align-items:center;padding:8px;border:1px solid #e3eaf1;border-radius:9px;background:#fff}.competition-task-list li.current{border-color:#94c2ec;background:#f6fbff}.competition-task-list li.complete{border-color:#c9e7d5;background:#f8fcf9}.competition-task-list li.locked{background:#f7f8fa;color:#8793a1}.competition-step-number{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:#edf3f8;color:#47749d;font-size:8px;font-weight:800}.competition-task-copy{display:grid;gap:2px;min-width:0}.competition-task-copy b{font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.competition-task-copy small{font-size:7px;color:#8290a0}.competition-task-result{font-size:8px;color:#6d7e90;white-space:nowrap}.competition-task-list button{min-width:92px;padding:7px 8px;border:1px solid #cbdceb;border-radius:7px;background:#fff;color:#386d9e;font-size:8px;font-weight:800;cursor:pointer}.competition-task-list button:disabled{opacity:.48;cursor:not-allowed}.competition-footnote{display:block;color:#8290a0;font-size:7px;line-height:1.5}@media(max-width:720px){.competition-task-list li{grid-template-columns:24px minmax(0,1fr) auto}.competition-task-list button{grid-column:2/-1;width:100%}.competition-task-result{font-size:7px}.competition-metrics{gap:4px}.competition-metrics div{padding:6px}.competition-metrics b{font-size:9px}}
 </style>
